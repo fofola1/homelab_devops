@@ -1,0 +1,76 @@
+name: "CI - Validate"
+
+on:
+    push:
+        branches: [ main ]
+    pull_request:
+        branches: [ main ]
+
+concurrency:
+    group: "ci-${{ github.ref }}"
+    cancel-in-progress: true
+
+jobs:
+    lint-terraform:
+        name: "Terraform Lint & Validate"
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Setup Terraform"
+                uses: hashicorp/setup-terraform@v4.0.1
+            -
+                name: "Validate formatting & syntax"
+                run: |
+                    cd terraform
+                    terraform fmt -check
+                    terraform init -backend=false
+                    terraform validate
+
+    lint-ansible:
+        name: "Ansible Lint"
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Setup Python"
+                uses: actions/setup-python@v7
+                with:
+                    python-version: "3.12"
+                    cache: "pip"
+            -
+                name: "Install and run ansible-lint"
+                run: |
+                    pip install ansible-lint
+                    ansible-lint ansible/
+
+    lint-docker:
+        name: "Docker Compose Validation"
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Validate Compose Files"
+                run: |
+                    find docker -name "docker-compose*.yml" -o -name "compose.yml" | while read -r compose_file; do
+                        echo "Checking $compose_file..."
+                        docker compose -f "$compose_file" config --quiet
+                    done
+
+    lint-scripts:
+        name: "ShellCheck"
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Run ShellCheck"
+                run: |
+                    find scripts/ -type f -name "*.sh" -exec shellcheck {} +
