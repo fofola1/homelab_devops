@@ -2,8 +2,14 @@ name: "CD - Deploy to Proxmox"
 
 on:
     workflow_dispatch:
+        inputs:
+            force_deploy:
+                description: "Deploy all components"
+                required: true
+                default: false
+                type: boolean
     push:
-        branches: [main]
+        branches: [ main ]
 
 concurrency:
     group: "cd-production"
@@ -17,6 +23,7 @@ jobs:
             terraform: ${{ steps.filter.outputs.terraform }}
             ansible: ${{ steps.filter.outputs.ansible }}
             docker: ${{ steps.filter.outputs.docker }}
+            force_deploy: ${{ inputs.force_deploy }}
         steps:
             -
                 name: "Checkout"
@@ -37,7 +44,7 @@ jobs:
     terraform-plan:
         name: "0. Terraform Plan"
         needs: detect-changes
-        if: needs.detect-changes.outputs.terraform == 'true'
+        if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         steps:
             -
@@ -75,7 +82,7 @@ jobs:
         name: "1. Terraform Apply"
         needs: [detect-changes, terraform-plan]
         environment: prod
-        if: needs.detect-changes.outputs.terraform == 'true'
+        if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         steps:
             -
@@ -114,8 +121,19 @@ jobs:
         environment: prod
         if: |
             always() &&
-            (needs.terraform-apply.result == 'success' || needs.terraform-apply.result == 'skipped') &&
-            (needs.detect-changes.outputs.ansible == 'true' || needs.detect-changes.outputs.terraform == 'true')
+            (
+                needs.terraform-apply.result == 'success' ||
+                (
+                    needs.detect-changes.outputs.terraform != 'true' &&
+                    needs.detect-changes.outputs.force_deploy != 'true' &&
+                    needs.terraform-apply.result == 'skipped'
+                )
+            ) &&
+            (
+                needs.detect-changes.outputs.ansible == 'true' ||
+                needs.detect-changes.outputs.terraform == 'true' ||
+                needs.detect-changes.outputs.force_deploy == 'true'
+            )
         runs-on: ubuntu-latest
         steps:
             -
@@ -135,9 +153,24 @@ jobs:
                     ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
             -
                 name: "Run Ansible Playbook"
+                env:
+                    ANSIBLE_HOST_KEY_CHECKING: "true"
+                    ANSIBLE_TARGET_GROUP: ${{ vars.ANSIBLE_TARGET_GROUP }}
+                    ANSIBLE_VERSION: "10.7.0"
+                    PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                 run: |
-                    pip install ansible
-                    ansible-playbook -i ansible/inventory/proxmox.yml ansible/site.yml
+                    set -euo pipefail
+                    test -s ansible/inventory/proxmox.yml
+                    test -f ansible/site.yml
+                    test -n "${ANSIBLE_TARGET_GROUP}"
+                    test -n "${PROXMOX_KNOWN_HOSTS}"
+                    mkdir -p ~/.ssh
+                    printf '%s\n' "${PROXMOX_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                    python -m pip install "ansible==${ANSIBLE_VERSION}"
+                    ansible-inventory -i ansible/inventory/proxmox.yml --graph "${ANSIBLE_TARGET_GROUP}"
+                    ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml --list-hosts
+                    ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300'
+                    ansible-playbook -i ansible/inventory/proxmox.yml --limit "${ANSIBLE_TARGET_GROUP}" ansible/site.yml
 
     docker:
         name: "3. Deploy Docker Workloads"
@@ -145,8 +178,21 @@ jobs:
         environment: prod
         if: |
             always() &&
-            (needs.ansible.result == 'success' || needs.ansible.result == 'skipped') &&
-            (needs.detect-changes.outputs.docker == 'true' || needs.detect-changes.outputs.ansible == 'true' || needs.detect-changes.outputs.terraform == 'true')
+            (
+                needs.ansible.result == 'success' ||
+                (
+                    needs.detect-changes.outputs.ansible != 'true' &&
+                    needs.detect-changes.outputs.terraform != 'true' &&
+                    needs.detect-changes.outputs.force_deploy != 'true' &&
+                    needs.ansible.result == 'skipped'
+                )
+            ) &&
+            (
+                needs.detect-changes.outputs.docker == 'true' ||
+                needs.detect-changes.outputs.ansible == 'true' ||
+                needs.detect-changes.outputs.terraform == 'true' ||
+                needs.detect-changes.outputs.force_deploy == 'true'
+            )
         runs-on: ubuntu-latest
         steps:
             -
@@ -167,14 +213,20 @@ jobs:
             -
                 name: "Deploy Compose Stacks via Remote Host"
                 env:
-                    DOCKER_HOST: "ssh://${{ vars.DEPLOY_USER }}@${{ vars.DOCKER_HOST_IP }}"
                     DOCKER_HOST_IP: ${{ vars.DOCKER_HOST_IP }}
+                    DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+                    DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+                    DOCKER_HOST_KNOWN_HOSTS: ${{ secrets.DOCKER_HOST_KNOWN_HOSTS }}
                 run: |
+                    set -euo pipefail
+                    test -d docker
+                    test -n "${DEPLOY_USER}"
+                    test -n "${DOCKER_HOST_IP}"
+                    test -n "${DEPLOY_PATH}"
+                    test -n "${DOCKER_HOST_KNOWN_HOSTS}"
                     mkdir -p ~/.ssh
-                    ssh-keyscan -H "${DOCKER_HOST_IP}" >> ~/.ssh/known_hosts
-                    cd docker
-                    docker compose pull
-                    docker compose up -d --remove-orphans --wait
-                    docker compose ps
-
-
+                    printf '%s\n' "${DOCKER_HOST_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                    ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" "mkdir -p '${DEPLOY_PATH}'"
+                    rsync -az --delete -e ssh docker/ "${DEPLOY_USER}@${DOCKER_HOST_IP}:${DEPLOY_PATH}/"
+                    ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" \
+                    "cd '${DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
