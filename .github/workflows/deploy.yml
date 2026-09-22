@@ -107,3 +107,74 @@ jobs:
                     cd terraform
                     terraform init
                     terraform apply -auto-approve tfplan
+
+    ansible:
+        name: "2. Run Ansible"
+        needs: [detect-changes, terraform-apply]
+        environment: prod
+        if: |
+            always() &&
+            (needs.terraform-apply.result == 'success' || needs.terraform-apply.result == 'skipped') &&
+            (needs.detect-changes.outputs.ansible == 'true' || needs.detect-changes.outputs.terraform == 'true')
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Connect to Tailscale"
+                uses: tailscale/github-action@v4.1.3
+                with:
+                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                    tags: tag:proxmox-ci
+            -
+                name: "Setup SSH Agent"
+                uses: webfactory/ssh-agent@v0.10.0
+                with:
+                    ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            -
+                name: "Run Ansible Playbook"
+                run: |
+                    pip install ansible
+                    ansible-playbook -i ansible/inventory/proxmox.yml ansible/site.yml
+
+    docker:
+        name: "3. Deploy Docker Workloads"
+        needs: [detect-changes, ansible]
+        environment: prod
+        if: |
+            always() &&
+            (needs.ansible.result == 'success' || needs.ansible.result == 'skipped') &&
+            (needs.detect-changes.outputs.docker == 'true' || needs.detect-changes.outputs.ansible == 'true' || needs.detect-changes.outputs.terraform == 'true')
+        runs-on: ubuntu-latest
+        steps:
+            -
+                name: "Checkout"
+                uses: actions/checkout@v7.0.1
+            -
+                name: "Connect to Tailscale"
+                uses: tailscale/github-action@v4.1.3
+                with:
+                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                    tags: tag:proxmox-ci
+            -
+                name: "Setup SSH Agent"
+                uses: webfactory/ssh-agent@v0.10.0
+                with:
+                    ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            -
+                name: "Deploy Compose Stacks via Remote Host"
+                env:
+                    DOCKER_HOST: "ssh://${{ vars.DEPLOY_USER }}@${{ vars.DOCKER_HOST_IP }}"
+                    DOCKER_HOST_IP: ${{ vars.DOCKER_HOST_IP }}
+                run: |
+                    mkdir -p ~/.ssh
+                    ssh-keyscan -H "${DOCKER_HOST_IP}" >> ~/.ssh/known_hosts
+                    cd docker
+                    docker compose pull
+                    docker compose up -d --remove-orphans --wait
+                    docker compose ps
+
+
