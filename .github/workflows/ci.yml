@@ -2,9 +2,9 @@ name: "CI - Validate"
 
 on:
     push:
-        branches: [ main ]
+        branches: [main]
     pull_request:
-        branches: [ main ]
+        branches: [main]
 
 concurrency:
     group: "ci-${{ github.ref }}"
@@ -15,77 +15,78 @@ jobs:
         name: "Terraform Lint & Validate"
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Setup Terraform"
-                uses: hashicorp/setup-terraform@v4.0.1
-            -
-                name: "Validate formatting & syntax"
-                run: |
-                    set -euo pipefail
-                    test -d terraform
-                    cd terraform
-                    terraform fmt -check
-                    terraform init -backend=false
-                    terraform validate
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Load tool versions"
+              id: versions
+              run: |
+                  echo "terraform_version=$(awk -F= '$1 == \"TERRAFORM_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+            - name: "Setup Terraform"
+              uses: hashicorp/setup-terraform@v4.0.1
+              with:
+                  terraform_version: ${{ steps.versions.outputs.terraform_version }}
+            - name: "Validate formatting & syntax"
+              run: |
+                  set -euo pipefail
+                  test -d terraform
+                  cd terraform
+                  terraform fmt -check
+                  terraform init -backend=false
+                  terraform validate
 
     lint-ansible:
         name: "Ansible Lint"
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Setup Python"
-                uses: actions/setup-python@v7
-                with:
-                    python-version: "3.12"
-                    cache: "pip"
-            -
-                name: "Install and run ansible-lint"
-                run: |
-                    set -euo pipefail
-                    test -d ansible
-                    python -m pip install ansible-lint==25.6.1
-                    ansible-lint ansible/
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Load tool versions"
+              id: versions
+              run: |
+                  echo "python_version=$(awk -F= '$1 == \"PYTHON_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+            - name: "Setup Python"
+              uses: actions/setup-python@v7
+              with:
+                  python-version: ${{ steps.versions.outputs.python_version }}
+                  cache: "pip"
+            - name: "Install and run ansible-lint"
+              run: |
+                  set -euo pipefail
+                  source .github/versions.env
+                  test -d ansible
+                  python -m pip install "ansible-lint==${ANSIBLE_LINT_VERSION}"
+                  ansible-lint ansible/
 
     lint-docker:
         name: "Docker Compose Validation"
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Validate Compose Files"
-                run: |
-                    set -euo pipefail
-                    test -d docker
-                    compose_files=$(find docker -type f \( -name "docker-compose*.yml" -o -name "compose.yml" \) -print)
-                    test -n "${compose_files}"
-                    while read -r compose_file; do
-                        echo "Checking $compose_file..."
-                        docker compose -f "$compose_file" config --quiet
-                    done <<< "${compose_files}"
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Validate Compose Files"
+              run: |
+                  set -euo pipefail
+                  test -d docker
+                  compose_files=$(find docker -type f \( -name "docker-compose*.yml" -o -name "compose.yml" \) -print)
+                  test -n "${compose_files}"
+                  while read -r compose_file; do
+                      echo "Checking $compose_file..."
+                      docker compose -f "$compose_file" config --quiet
+                  done <<< "${compose_files}"
 
     lint-scripts:
         name: "ShellCheck"
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Run ShellCheck"
-                run: |
-                    set -euo pipefail
-                    test -d scripts
-                    scripts=$(find scripts/ -type f -name "*.sh" -print)
-                    test -n "${scripts}"
-                    while read -r script; do
-                        echo "Checking $script..."
-                        shellcheck "$script"
-                    done <<< "${scripts}"
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Run ShellCheck"
+              run: |
+                  set -euo pipefail
+                  test -d scripts
+                  scripts=$(find scripts/ -type f -name "*.sh" -print)
+                  test -n "${scripts}"
+                  while read -r script; do
+                      echo "Checking $script..."
+                      shellcheck "$script"
+                  done <<< "${scripts}"

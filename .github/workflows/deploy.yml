@@ -9,7 +9,7 @@ on:
                 default: false
                 type: boolean
     push:
-        branches: [ main ]
+        branches: [main]
 
 concurrency:
     group: "cd-production"
@@ -25,21 +25,19 @@ jobs:
             docker: ${{ steps.filter.outputs.docker }}
             force_deploy: ${{ inputs.force_deploy }}
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Check modified paths"
-                uses: dorny/paths-filter@v4.0.3
-                id: filter
-                with:
-                    filters: |
-                        terraform:
-                            - 'terraform/**'
-                        ansible:
-                            - 'ansible/**'
-                        docker:
-                            - 'docker/**'
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Check modified paths"
+              uses: dorny/paths-filter@v4.0.3
+              id: filter
+              with:
+                  filters: |
+                      terraform:
+                          - 'terraform/**'
+                      ansible:
+                          - 'ansible/**'
+                      docker:
+                          - 'docker/**'
 
     terraform-plan:
         name: "0. Terraform Plan"
@@ -47,36 +45,37 @@ jobs:
         if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Connect to Tailscale"
-                uses: tailscale/github-action@v4.1.3
-                with:
-                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-                    tags: tag:proxmox-ci
-            -
-                name: "Setup Terraform"
-                uses: hashicorp/setup-terraform@v4.0.1
-            -
-                name: "Terraform Init & Plan"
-                env:
-                    PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
-                    PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
-                    PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
-                run: |
-                    cd terraform
-                    terraform init
-                    terraform plan -out=tfplan
-            -
-                name: "Upload Terraform Plan"
-                uses: actions/upload-artifact@v7.0.1
-                with:
-                    name: terraform-plan
-                    path: terraform/tfplan
-                    retention-days: 7
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Connect to Tailscale"
+              uses: tailscale/github-action@v4.1.3
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                  tags: tag:proxmox-ci
+            - name: "Load tool versions"
+              id: versions
+              run: |
+                  echo "terraform_version=$(awk -F= '$1 == \"TERRAFORM_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+            - name: "Setup Terraform"
+              uses: hashicorp/setup-terraform@v4.0.1
+              with:
+                  terraform_version: ${{ steps.versions.outputs.terraform_version }}
+            - name: "Terraform Init & Plan"
+              env:
+                  PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
+                  PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
+              run: |
+                  cd terraform
+                  terraform init
+                  terraform plan -out=tfplan
+            - name: "Upload Terraform Plan"
+              uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: terraform-plan
+                  path: terraform/tfplan
+                  retention-days: 7
 
     terraform-apply:
         name: "1. Terraform Apply"
@@ -85,35 +84,36 @@ jobs:
         if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Connect to Tailscale"
-                uses: tailscale/github-action@v4.1.3
-                with:
-                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-                    tags: tag:proxmox-ci
-            -
-                name: "Setup Terraform"
-                uses: hashicorp/setup-terraform@v4.0.1
-            -
-                name: "Download Terraform Plan"
-                uses: actions/download-artifact@v8.0.1
-                with:
-                    name: terraform-plan
-                    path: terraform
-            -
-                name: "Terraform Init & Apply"
-                env:
-                    PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
-                    PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
-                    PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
-                run: |
-                    cd terraform
-                    terraform init
-                    terraform apply -auto-approve tfplan
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Connect to Tailscale"
+              uses: tailscale/github-action@v4.1.3
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                  tags: tag:proxmox-ci
+            - name: "Load tool versions"
+              id: versions
+              run: |
+                  echo "terraform_version=$(awk -F= '$1 == \"TERRAFORM_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+            - name: "Setup Terraform"
+              uses: hashicorp/setup-terraform@v4.0.1
+              with:
+                  terraform_version: ${{ steps.versions.outputs.terraform_version }}
+            - name: "Download Terraform Plan"
+              uses: actions/download-artifact@v8.0.1
+              with:
+                  name: terraform-plan
+                  path: terraform
+            - name: "Terraform Init & Apply"
+              env:
+                  PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
+                  PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
+              run: |
+                  cd terraform
+                  terraform init
+                  terraform apply -auto-approve tfplan
 
     ansible:
         name: "2. Run Ansible"
@@ -136,41 +136,37 @@ jobs:
             )
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Connect to Tailscale"
-                uses: tailscale/github-action@v4.1.3
-                with:
-                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-                    tags: tag:proxmox-ci
-            -
-                name: "Setup SSH Agent"
-                uses: webfactory/ssh-agent@v0.10.0
-                with:
-                    ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
-            -
-                name: "Run Ansible Playbook"
-                env:
-                    ANSIBLE_HOST_KEY_CHECKING: "true"
-                    ANSIBLE_TARGET_GROUP: ${{ vars.ANSIBLE_TARGET_GROUP }}
-                    ANSIBLE_VERSION: "10.7.0"
-                    PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
-                run: |
-                    set -euo pipefail
-                    test -s ansible/inventory/proxmox.yml
-                    test -f ansible/site.yml
-                    test -n "${ANSIBLE_TARGET_GROUP}"
-                    test -n "${PROXMOX_KNOWN_HOSTS}"
-                    mkdir -p ~/.ssh
-                    printf '%s\n' "${PROXMOX_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-                    python -m pip install "ansible==${ANSIBLE_VERSION}"
-                    ansible-inventory -i ansible/inventory/proxmox.yml --graph "${ANSIBLE_TARGET_GROUP}"
-                    ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml --list-hosts
-                    ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300'
-                    ansible-playbook -i ansible/inventory/proxmox.yml --limit "${ANSIBLE_TARGET_GROUP}" ansible/site.yml
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Connect to Tailscale"
+              uses: tailscale/github-action@v4.1.3
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                  tags: tag:proxmox-ci
+            - name: "Setup SSH Agent"
+              uses: webfactory/ssh-agent@v0.10.0
+              with:
+                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Run Ansible Playbook"
+              env:
+                  ANSIBLE_HOST_KEY_CHECKING: "true"
+                  ANSIBLE_TARGET_GROUP: ${{ vars.ANSIBLE_TARGET_GROUP }}
+                  PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
+              run: |
+                  set -euo pipefail
+                  source .github/versions.env
+                  test -s ansible/inventory/proxmox.yml
+                  test -f ansible/site.yml
+                  test -n "${ANSIBLE_TARGET_GROUP}"
+                  test -n "${PROXMOX_KNOWN_HOSTS}"
+                  mkdir -p ~/.ssh
+                  printf '%s\n' "${PROXMOX_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                  python -m pip install "ansible==${ANSIBLE_VERSION}"
+                  ansible-inventory -i ansible/inventory/proxmox.yml --graph "${ANSIBLE_TARGET_GROUP}"
+                  ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml --list-hosts
+                  ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300'
+                  ansible-playbook -i ansible/inventory/proxmox.yml --limit "${ANSIBLE_TARGET_GROUP}" ansible/site.yml
 
     docker:
         name: "3. Deploy Docker Workloads"
@@ -195,38 +191,34 @@ jobs:
             )
         runs-on: ubuntu-latest
         steps:
-            -
-                name: "Checkout"
-                uses: actions/checkout@v7.0.1
-            -
-                name: "Connect to Tailscale"
-                uses: tailscale/github-action@v4.1.3
-                with:
-                    oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-                    oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-                    tags: tag:proxmox-ci
-            -
-                name: "Setup SSH Agent"
-                uses: webfactory/ssh-agent@v0.10.0
-                with:
-                    ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
-            -
-                name: "Deploy Compose Stacks via Remote Host"
-                env:
-                    DOCKER_HOST_IP: ${{ vars.DOCKER_HOST_IP }}
-                    DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-                    DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-                    DOCKER_HOST_KNOWN_HOSTS: ${{ secrets.DOCKER_HOST_KNOWN_HOSTS }}
-                run: |
-                    set -euo pipefail
-                    test -d docker
-                    test -n "${DEPLOY_USER}"
-                    test -n "${DOCKER_HOST_IP}"
-                    test -n "${DEPLOY_PATH}"
-                    test -n "${DOCKER_HOST_KNOWN_HOSTS}"
-                    mkdir -p ~/.ssh
-                    printf '%s\n' "${DOCKER_HOST_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-                    ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" "mkdir -p '${DEPLOY_PATH}'"
-                    rsync -az --delete -e ssh docker/ "${DEPLOY_USER}@${DOCKER_HOST_IP}:${DEPLOY_PATH}/"
-                    ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" \
-                    "cd '${DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Connect to Tailscale"
+              uses: tailscale/github-action@v4.1.3
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                  tags: tag:proxmox-ci
+            - name: "Setup SSH Agent"
+              uses: webfactory/ssh-agent@v0.10.0
+              with:
+                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Deploy Compose Stacks via Remote Host"
+              env:
+                  DOCKER_HOST_IP: ${{ vars.DOCKER_HOST_IP }}
+                  DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+                  DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+                  DOCKER_HOST_KNOWN_HOSTS: ${{ secrets.DOCKER_HOST_KNOWN_HOSTS }}
+              run: |
+                  set -euo pipefail
+                  test -d docker
+                  test -n "${DEPLOY_USER}"
+                  test -n "${DOCKER_HOST_IP}"
+                  test -n "${DEPLOY_PATH}"
+                  test -n "${DOCKER_HOST_KNOWN_HOSTS}"
+                  mkdir -p ~/.ssh
+                  printf '%s\n' "${DOCKER_HOST_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                  ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" "mkdir -p '${DEPLOY_PATH}'"
+                  rsync -az --delete -e ssh docker/ "${DEPLOY_USER}@${DOCKER_HOST_IP}:${DEPLOY_PATH}/"
+                  ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" \
+                  "cd '${DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
