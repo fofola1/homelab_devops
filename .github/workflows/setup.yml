@@ -1,0 +1,128 @@
+name: "Setup Environment and deploy process"
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      TS_OAUTH_CLIENT_ID:
+        description: 'Tailscale OAuth Client ID'
+        required: true
+        type: string
+      TS_OAUTH_SECRET:
+        description: 'Tailscale OAuth Secret'
+        required: true
+        type: string
+
+      TS_PROXMOX_HOSTNAME:
+        description: 'Proxmox Hostname'
+        required: true
+        type: string
+      PVE_API_TOKEN_ID:
+        description: 'Proxmox API Token ID'
+        required: true
+        type: string
+      PVE_API_TOKEN_SECRET:
+        description: 'Proxmox API Token Secret'
+        required: true
+        type: string
+      PROXMOX_SSH_KEY:
+        description: 'Proxmox SSH Key'
+        required: true
+        type: string
+      PROXMOX_KNOWN_HOSTS:
+        description: 'Proxmox Known Hosts'
+        required: true
+        type: string
+
+      ANSIBLE_TARGET_GROUP:
+        description: 'Ansible Target Group'
+        required: true
+        type: string
+
+      DOCKER_HOST_IP:
+        description: 'Docker Host IP'
+        required: true
+        type: string
+      DEPLOY_PATH:
+        description: 'Deployment Path'
+        required: true
+        type: string
+      DEPLOY_USER:
+        description: 'Deployment User'
+        required: true
+        type: string
+      DOCKER_HOST_KNOWN_HOSTS:
+        description: 'Docker Host Known Hosts'
+        required: true
+        type: string
+
+permissions:
+  actions: write
+
+jobs:
+  process-input:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Set Environment Variables"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TS_PROXMOX_HOSTNAME: ${{ inputs.TS_PROXMOX_HOSTNAME }}
+          ANSIBLE_TARGET_GROUP: ${{ inputs.ANSIBLE_TARGET_GROUP }}
+          DOCKER_HOST_IP: ${{ inputs.DOCKER_HOST_IP }}
+          DEPLOY_PATH: ${{ inputs.DEPLOY_PATH }}
+          DEPLOY_USER: ${{ inputs.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          vars=(
+            "TS_PROXMOX_HOSTNAME"
+            "ANSIBLE_TARGET_GROUP"
+            "DOCKER_HOST_IP"
+            "DEPLOY_PATH"
+            "DEPLOY_USER"
+          )
+          for var in "${vars[@]}"; do
+            if [[ -z "${!var}" ]]; then
+              echo "Error: Input variable '$var' is not set. Exiting workflow."
+              exit 1
+            fi
+          done
+
+          for var in "${vars[@]}"; do
+            echo "Setting $var"
+            gh variable set "$var" --body "${!var}" --repo "$GITHUB_REPOSITORY"
+          done
+      - name: "Set Secrets"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TS_OAUTH_CLIENT_ID: ${{ inputs.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ inputs.TS_OAUTH_SECRET }}
+          PVE_API_TOKEN_ID: ${{ inputs.PVE_API_TOKEN_ID }}
+          PVE_API_TOKEN_SECRET: ${{ inputs.PVE_API_TOKEN_SECRET }}
+          PROXMOX_SSH_KEY: ${{ inputs.PROXMOX_SSH_KEY }}
+          PROXMOX_KNOWN_HOSTS: ${{ inputs.PROXMOX_KNOWN_HOSTS }}
+          DOCKER_HOST_IP: ${{ inputs.DOCKER_HOST_IP }}
+          DOCKER_HOST_KNOWN_HOSTS: ${{ inputs.DOCKER_HOST_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          secrs=(
+            "TS_OAUTH_CLIENT_ID"
+            "TS_OAUTH_SECRET"
+            "PVE_API_TOKEN_ID"
+            "PVE_API_TOKEN_SECRET"
+            "PROXMOX_SSH_KEY"
+            "PROXMOX_KNOWN_HOSTS"
+            "DOCKER_HOST_IP"
+            "DOCKER_HOST_KNOWN_HOSTS"
+          )
+          for secr in "${secrs[@]}"; do
+            if [[ -z "${!secr}" ]]; then
+              echo "Error: Input secret '$secr' is not set. Exiting workflow."
+              exit 1
+            fi
+          done
+
+          for secr in "${secrs[@]}"; do
+            echo "Setting $secr"
+            gh secret set "$secr" --app actions --body "${!secr}" --repo "$GITHUB_REPOSITORY"
+            gh secret list --app actions --repo "$GITHUB_REPOSITORY" | awk '{print tolower($1)}' | grep -Fx "$(printf '%s' "$secr" | tr '[:upper:]' '[:lower:]')" >/dev/null
+          done
