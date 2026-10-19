@@ -17,6 +17,10 @@ on:
         description: 'Proxmox Hostname'
         required: true
         type: string
+      PROXMOX_NODE:
+        description: 'Proxmox Node'
+        required: true
+        type: string
       PVE_API_TOKEN_ID:
         description: 'Proxmox API Token ID'
         required: true
@@ -34,25 +38,54 @@ on:
         required: true
         type: string
 
-      ANSIBLE_TARGET_GROUP:
-        description: 'Ansible Target Group'
+      DOCKER_VM_ANSIBLE_TARGET_GROUP:
+        description: 'Docker VM Ansible Target Group'
         required: true
+        default: 'docker_hosts'
         type: string
 
-      DOCKER_HOST_IP:
-        description: 'Docker Host IP'
+      DOCKER_VM_HOST_IP:
+        description: 'Docker VM Host IP'
         required: true
         type: string
-      DEPLOY_PATH:
+      DOCKER_VM_TEMPLATE_ID:
+        description: 'Docker VM Template ID'
+        required: true
+        type: string
+      DOCKER_VM_ID:
+        description: 'Docker VM ID'
+        required: true
+        type: string
+      DOCKER_VM_DATASTORE:
+        description: 'Docker VM Datastore'
+        required: true
+        type: string
+      DOCKER_VM_IPV4_CIDR:
+        description: 'Docker VM IPv4 CIDR'
+        required: true
+        default: '24'
+        type: string
+      DOCKER_VM_IPV4_GATEWAY:
+        description: 'Docker VM IPv4 Gateway'
+        required: true
+        type: string
+      DOCKER_VM_NETWORK_BRIDGE:
+        description: 'Docker VM Network Bridge'
+        required: true
+        default: 'vmbr0'
+        type: string
+      DOCKER_VM_DEPLOY_PATH:
         description: 'Deployment Path'
         required: true
+        default: '/opt/docker'
         type: string
-      DEPLOY_USER:
+      DOCKER_VM_DEPLOY_USER:
         description: 'Deployment User'
         required: true
+        default: 'deploy'
         type: string
-      DOCKER_HOST_KNOWN_HOSTS:
-        description: 'Docker Host Known Hosts'
+      DOCKER_VM_KNOWN_HOSTS:
+        description: 'Docker VM Known Hosts'
         required: true
         type: string
 
@@ -67,18 +100,32 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TS_PROXMOX_HOSTNAME: ${{ inputs.TS_PROXMOX_HOSTNAME }}
-          ANSIBLE_TARGET_GROUP: ${{ inputs.ANSIBLE_TARGET_GROUP }}
-          DOCKER_HOST_IP: ${{ inputs.DOCKER_HOST_IP }}
-          DEPLOY_PATH: ${{ inputs.DEPLOY_PATH }}
-          DEPLOY_USER: ${{ inputs.DEPLOY_USER }}
+          PROXMOX_NODE: ${{ inputs.PROXMOX_NODE }}
+          DOCKER_VM_ANSIBLE_TARGET_GROUP: ${{ inputs.DOCKER_VM_ANSIBLE_TARGET_GROUP }}
+          DOCKER_VM_HOST_IP: ${{ inputs.DOCKER_VM_HOST_IP }}
+          DOCKER_VM_TEMPLATE_ID: ${{ inputs.DOCKER_VM_TEMPLATE_ID }}
+          DOCKER_VM_ID: ${{ inputs.DOCKER_VM_ID }}
+          DOCKER_VM_DATASTORE: ${{ inputs.DOCKER_VM_DATASTORE }}
+          DOCKER_VM_IPV4_CIDR: ${{ inputs.DOCKER_VM_IPV4_CIDR }}
+          DOCKER_VM_IPV4_GATEWAY: ${{ inputs.DOCKER_VM_IPV4_GATEWAY }}
+          DOCKER_VM_NETWORK_BRIDGE: ${{ inputs.DOCKER_VM_NETWORK_BRIDGE }}
+          DOCKER_VM_DEPLOY_PATH: ${{ inputs.DOCKER_VM_DEPLOY_PATH }}
+          DOCKER_VM_DEPLOY_USER: ${{ inputs.DOCKER_VM_DEPLOY_USER }}
         run: |
           set -euo pipefail
           vars=(
             "TS_PROXMOX_HOSTNAME"
-            "ANSIBLE_TARGET_GROUP"
-            "DOCKER_HOST_IP"
-            "DEPLOY_PATH"
-            "DEPLOY_USER"
+            "PROXMOX_NODE"
+            "DOCKER_VM_ANSIBLE_TARGET_GROUP"
+            "DOCKER_VM_HOST_IP"
+            "DOCKER_VM_TEMPLATE_ID"
+            "DOCKER_VM_ID"
+            "DOCKER_VM_DATASTORE"
+            "DOCKER_VM_IPV4_CIDR"
+            "DOCKER_VM_IPV4_GATEWAY"
+            "DOCKER_VM_NETWORK_BRIDGE"
+            "DOCKER_VM_DEPLOY_PATH"
+            "DOCKER_VM_DEPLOY_USER"
           )
           for var in "${vars[@]}"; do
             if [[ -z "${!var}" ]]; then
@@ -100,8 +147,8 @@ jobs:
           PVE_API_TOKEN_SECRET: ${{ inputs.PVE_API_TOKEN_SECRET }}
           PROXMOX_SSH_KEY: ${{ inputs.PROXMOX_SSH_KEY }}
           PROXMOX_KNOWN_HOSTS: ${{ inputs.PROXMOX_KNOWN_HOSTS }}
-          DOCKER_HOST_IP: ${{ inputs.DOCKER_HOST_IP }}
-          DOCKER_HOST_KNOWN_HOSTS: ${{ inputs.DOCKER_HOST_KNOWN_HOSTS }}
+          DOCKER_VM_HOST_IP: ${{ inputs.DOCKER_VM_HOST_IP }}
+          DOCKER_VM_KNOWN_HOSTS: ${{ inputs.DOCKER_VM_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           secrs=(
@@ -111,8 +158,8 @@ jobs:
             "PVE_API_TOKEN_SECRET"
             "PROXMOX_SSH_KEY"
             "PROXMOX_KNOWN_HOSTS"
-            "DOCKER_HOST_IP"
-            "DOCKER_HOST_KNOWN_HOSTS"
+            "DOCKER_VM_HOST_IP"
+            "DOCKER_VM_KNOWN_HOSTS"
           )
           for secr in "${secrs[@]}"; do
             if [[ -z "${!secr}" ]]; then

@@ -61,11 +61,31 @@ jobs:
               uses: hashicorp/setup-terraform@v4.0.1
               with:
                   terraform_version: ${{ steps.versions.outputs.terraform_version }}
+            - name: "Prepare VM SSH key"
+              id: ssh-key
+              env:
+                  PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY }}
+              run: |
+                  set -euo pipefail
+                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
+                  echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
             - name: "Terraform Init & Plan"
               env:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
                   PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
+                  TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
+                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
+                  TF_VAR_template_vm_id: ${{ vars.DOCKER_VM_TEMPLATE_ID }}
+                  TF_VAR_vm_id: ${{ vars.DOCKER_VM_ID }}
+                  TF_VAR_vm_datastore: ${{ vars.DOCKER_VM_DATASTORE }}
+                  TF_VAR_vm_ipv4_address: ${{ vars.DOCKER_VM_HOST_IP }}
+                  TF_VAR_vm_ipv4_cidr: ${{ vars.DOCKER_VM_IPV4_CIDR }}
+                  TF_VAR_vm_ipv4_gateway: ${{ vars.DOCKER_VM_IPV4_GATEWAY }}
+                  TF_VAR_vm_network_bridge: ${{ vars.DOCKER_VM_NETWORK_BRIDGE }}
+                  TF_VAR_docker_user: ${{ vars.DOCKER_VM_DEPLOY_USER }}
+                  TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
                   terraform init
@@ -100,6 +120,14 @@ jobs:
               uses: hashicorp/setup-terraform@v4.0.1
               with:
                   terraform_version: ${{ steps.versions.outputs.terraform_version }}
+            - name: "Prepare VM SSH key"
+              id: ssh-key
+              env:
+                  PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY }}
+              run: |
+                  set -euo pipefail
+                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
+                  echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
             - name: "Download Terraform Plan"
               uses: actions/download-artifact@v8.0.1
               with:
@@ -110,6 +138,18 @@ jobs:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
                   PM_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
+                  TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
+                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
+                  TF_VAR_template_vm_id: ${{ vars.DOCKER_VM_TEMPLATE_ID }}
+                  TF_VAR_vm_id: ${{ vars.DOCKER_VM_ID }}
+                  TF_VAR_vm_datastore: ${{ vars.DOCKER_VM_DATASTORE }}
+                  TF_VAR_vm_ipv4_address: ${{ vars.DOCKER_VM_HOST_IP }}
+                  TF_VAR_vm_ipv4_cidr: ${{ vars.DOCKER_VM_IPV4_CIDR }}
+                  TF_VAR_vm_ipv4_gateway: ${{ vars.DOCKER_VM_IPV4_GATEWAY }}
+                  TF_VAR_vm_network_bridge: ${{ vars.DOCKER_VM_NETWORK_BRIDGE }}
+                  TF_VAR_docker_user: ${{ vars.DOCKER_VM_DEPLOY_USER }}
+                  TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
                   terraform init
@@ -151,22 +191,28 @@ jobs:
             - name: "Run Ansible Playbook"
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
-                  ANSIBLE_TARGET_GROUP: ${{ vars.ANSIBLE_TARGET_GROUP }}
+                  DOCKER_VM_ANSIBLE_TARGET_GROUP: ${{ vars.DOCKER_VM_ANSIBLE_TARGET_GROUP }}
+                  DOCKER_VM_HOST_IP: ${{ vars.DOCKER_VM_HOST_IP }}
+                  DOCKER_VM_DEPLOY_USER: ${{ vars.DOCKER_VM_DEPLOY_USER }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
+                  DOCKER_VM_KNOWN_HOSTS: ${{ secrets.DOCKER_VM_KNOWN_HOSTS }}
               run: |
                   set -euo pipefail
                   source .github/versions.env
+                  export TERRAFORM_VERSION ANSIBLE_VERSION
                   test -s ansible/inventory/proxmox.yml
                   test -f ansible/site.yml
-                  test -n "${ANSIBLE_TARGET_GROUP}"
+                  test -n "${DOCKER_VM_ANSIBLE_TARGET_GROUP}"
                   test -n "${PROXMOX_KNOWN_HOSTS}"
+                  test -n "${DOCKER_VM_KNOWN_HOSTS}"
                   mkdir -p ~/.ssh
                   printf '%s\n' "${PROXMOX_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                  printf '%s\n' "${DOCKER_VM_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
                   python -m pip install "ansible==${ANSIBLE_VERSION}"
-                  ansible-inventory -i ansible/inventory/proxmox.yml --graph "${ANSIBLE_TARGET_GROUP}"
-                  ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml --list-hosts
-                  ansible "${ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300'
-                  ansible-playbook -i ansible/inventory/proxmox.yml --limit "${ANSIBLE_TARGET_GROUP}" ansible/site.yml
+                  ansible-inventory -i ansible/inventory/proxmox.yml --graph "${DOCKER_VM_ANSIBLE_TARGET_GROUP}"
+                  ansible "${DOCKER_VM_ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml --list-hosts
+                  ansible "${DOCKER_VM_ANSIBLE_TARGET_GROUP}" -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300'
+                  ansible-playbook -i ansible/inventory/proxmox.yml --limit "${DOCKER_VM_ANSIBLE_TARGET_GROUP}" ansible/site.yml
 
     docker:
         name: "3. Deploy Docker Workloads"
@@ -205,20 +251,20 @@ jobs:
                   ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
             - name: "Deploy Compose Stacks via Remote Host"
               env:
-                  DOCKER_HOST_IP: ${{ vars.DOCKER_HOST_IP }}
-                  DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-                  DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-                  DOCKER_HOST_KNOWN_HOSTS: ${{ secrets.DOCKER_HOST_KNOWN_HOSTS }}
+                  DOCKER_VM_HOST_IP: ${{ vars.DOCKER_VM_HOST_IP }}
+                  DOCKER_VM_DEPLOY_PATH: ${{ vars.DOCKER_VM_DEPLOY_PATH }}
+                  DOCKER_VM_DEPLOY_USER: ${{ vars.DOCKER_VM_DEPLOY_USER }}
+                  DOCKER_VM_KNOWN_HOSTS: ${{ secrets.DOCKER_VM_KNOWN_HOSTS }}
               run: |
                   set -euo pipefail
                   test -d docker
-                  test -n "${DEPLOY_USER}"
-                  test -n "${DOCKER_HOST_IP}"
-                  test -n "${DEPLOY_PATH}"
-                  test -n "${DOCKER_HOST_KNOWN_HOSTS}"
+                  test -n "${DOCKER_VM_DEPLOY_USER}"
+                  test -n "${DOCKER_VM_HOST_IP}"
+                  test -n "${DOCKER_VM_DEPLOY_PATH}"
+                  test -n "${DOCKER_VM_KNOWN_HOSTS}"
                   mkdir -p ~/.ssh
-                  printf '%s\n' "${DOCKER_HOST_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-                  ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" "mkdir -p '${DEPLOY_PATH}'"
-                  rsync -az --delete -e ssh docker/ "${DEPLOY_USER}@${DOCKER_HOST_IP}:${DEPLOY_PATH}/"
-                  ssh "${DEPLOY_USER}@${DOCKER_HOST_IP}" \
-                  "cd '${DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
+                  printf '%s\n' "${DOCKER_VM_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+                  ssh "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}" "mkdir -p '${DOCKER_VM_DEPLOY_PATH}'"
+                  rsync -az --delete -e ssh docker/ "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}:${DOCKER_VM_DEPLOY_PATH}/"
+                  ssh "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}" \
+                  "cd '${DOCKER_VM_DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
