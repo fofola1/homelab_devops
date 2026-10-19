@@ -1,0 +1,7 @@
+all:
+  children:
+    docker_hosts:
+      hosts:
+        docker_vm:
+          ansible_host: "{{ lookup('env', 'DOCKER_VM_HOST_IP') }}"
+          ansible_user: "{{ lookup('env', 'DOCKER_VM_DEPLOY_USER') }}"
