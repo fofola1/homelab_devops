@@ -43,7 +43,7 @@ jobs:
             - name: "Load tool versions"
               id: versions
               run: |
-                  echo "python_version=$(awk -F= '$1 == \"PYTHON_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+                  echo "python_version=$(awk -F= '$1 == "PYTHON_VERSION" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
             - name: "Setup Python"
               uses: actions/setup-python@v7
               with:

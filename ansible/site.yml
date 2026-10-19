@@ -32,10 +32,12 @@
 
     - name: Install Terraform
       ansible.builtin.unarchive:
-        src: "https://releases.hashicorp.com/terraform/{{ lookup('env', 'TERRAFORM_VERSION') }}/terraform_{{ lookup('env', 'TERRAFORM_VERSION') }}_linux_amd64.zip"
+        src: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
         dest: /usr/local/bin
         remote_src: true
         creates: /usr/local/bin/terraform
+      vars:
+        terraform_version: "{{ lookup('env', 'TERRAFORM_VERSION') }}"
 
     - name: Install Ansible
       ansible.builtin.pip:
