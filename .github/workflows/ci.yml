@@ -48,7 +48,6 @@ jobs:
               uses: actions/setup-python@v7
               with:
                   python-version: ${{ steps.versions.outputs.python_version }}
-                  cache: "pip"
             - name: "Install and run ansible-lint"
               run: |
                   set -euo pipefail
