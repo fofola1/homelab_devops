@@ -86,6 +86,7 @@ jobs:
                   test -d scripts
                   scripts=$(find scripts/ -type f -name "*.sh" -print)
                   test -n "${scripts}"
+                  bash scripts/validate-layout.sh
                   while read -r script; do
                       echo "Checking $script..."
                       shellcheck "$script"
