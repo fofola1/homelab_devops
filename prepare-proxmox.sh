@@ -41,18 +41,16 @@ parse_connection() {
 connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, or SSH config alias)")
 parse_connection "${connection}"
 
-deploy_user=$(prompt_required "Deployment username")
-[[ "${deploy_user}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || \
-	die "Deployment username must be a valid Linux login name."
-[[ "${deploy_user}" != root ]] || die "Do not replace the root account."
+pve_api_user=$(prompt_required "Proxmox API username (without @pve)")
+[[ "${pve_api_user}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || \
+	die "Proxmox API username must be a valid user name."
+[[ "${pve_api_user}" != root ]] || die "Do not use the root API account."
 
-default_key_path=${HOME}/.ssh/id_ed25519.pub
-read -r -p "Public SSH key path [${default_key_path}]: " key_path
-key_path=${key_path:-${default_key_path}}
-[[ -f "${key_path}" ]] || die "Public key file not found: ${key_path}"
-ssh-keygen -lf "${key_path}" >/dev/null || die "The file is not a valid SSH public key."
-public_key=$(<"${key_path}")
-[[ -n "${public_key}" ]] || die "Public key file is empty."
+wol_interface=
+read -r -p "Enable Wake-on-LAN on a Proxmox interface? [y/N]: " wol_answer
+if [[ "${wol_answer}" =~ ^[Yy]$ ]]; then
+	wol_interface=$(prompt_required "Interface name (for example eno1)")
+fi
 
 configure_tailscale=false
 tailscale_tag=
@@ -76,10 +74,19 @@ remote_script=${script_directory}/prepare-proxmox-remote.sh
 [[ -f "${remote_script}" ]] || die "Remote script not found: ${remote_script}"
 
 printf -v remote_args '%q ' \
-	"${deploy_user}" "${public_key}" "${configure_tailscale}" \
-	"${tailscale_tag}" "${tailscale_hostname}"
-ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
-	"bash -s -- ${remote_args}" < "${remote_script}"
+	"${pve_api_user}" "${configure_tailscale}" "${tailscale_tag}" \
+	"${tailscale_hostname}" "${wol_interface}"
+remote_output=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+	"bash -s -- ${remote_args}" < "${remote_script}")
+printf '%s\n' "${remote_output}" | sed '/^Proxmox API token secret:/d'
+api_token_secret=$(printf '%s\n' "${remote_output}" | sed -n 's/^Proxmox API token secret: //p')
+[[ -n "${api_token_secret}" ]] || die "Remote setup did not return the Proxmox API token secret."
+
+report_script=${script_directory}/scripts/report-proxmox-state.sh
+[[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
+PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
+PVE_API_TOKEN_SECRET="${api_token_secret}" \
+	bash "${report_script}" "${connection}"
 
 echo
-echo "Done. Use ${deploy_user}@${SSH_TARGET} for the Proxmox SSH user where the workflow requires it."
+echo "Done. Proxmox API user: ${pve_api_user}@pve"

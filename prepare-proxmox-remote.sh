@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-deploy_user=$1
-public_key=$2
-configure_tailscale=$3
-tailscale_tag=$4
-tailscale_hostname=$5
+pve_api_user=$1
+configure_tailscale=$2
+tailscale_tag=$3
+tailscale_hostname=$4
+wol_interface=$5
 
 [[ "$(id -u)" -eq 0 ]] || {
 	echo "This script must connect as root so the SSH password is entered only once." >&2
@@ -52,25 +52,16 @@ add_no_subscription_source
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install --yes ca-certificates curl openssh-server sudo
+apt-get install --yes ca-certificates curl ethtool openssh-server
 
-if ! id "${deploy_user}" >/dev/null 2>&1; then
-	useradd --create-home --shell /bin/bash "${deploy_user}"
-fi
-
-usermod --lock --shell /bin/bash "${deploy_user}"
-usermod --append --groups sudo "${deploy_user}"
-
-install --directory --owner="${deploy_user}" --group="${deploy_user}" --mode=0700 \
-	"/home/${deploy_user}/.ssh"
-printf '%s\n' "${public_key}" > "/home/${deploy_user}/.ssh/authorized_keys"
-chown "${deploy_user}:${deploy_user}" "/home/${deploy_user}/.ssh/authorized_keys"
-chmod 0600 "/home/${deploy_user}/.ssh/authorized_keys"
-
-printf '%s\n' "${deploy_user} ALL=(ALL:ALL) NOPASSWD: ALL" \
-	> "/etc/sudoers.d/${deploy_user}"
-chmod 0440 "/etc/sudoers.d/${deploy_user}"
-visudo --check --file="/etc/sudoers.d/${deploy_user}"
+pveum user add "${pve_api_user}@pve" -comment "GitHub Actions API" 2>/dev/null || true
+pveum acl modify / -user "${pve_api_user}@pve" -role PVEVMAdmin
+token_output=$(pveum user token add "${pve_api_user}@pve" deploy --privsep 0 --output-format json)
+token_secret=$(printf '%s' "${token_output}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+[[ -n "${token_secret}" ]] || {
+	echo "Unable to read the new Proxmox API token secret." >&2
+	exit 1
+}
 
 if [[ "${configure_tailscale}" == true ]]; then
 	if ! command -v tailscale >/dev/null 2>&1; then
@@ -89,6 +80,35 @@ fi
 
 systemctl enable --now ssh
 
+if [[ -n "${wol_interface}" ]]; then
+	ip link show "${wol_interface}" >/dev/null
+	ethtool -s "${wol_interface}" wol g
+	cat > /usr/local/sbin/enable-proxmox-wol <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ethtool -s "$1" wol g
+EOF
+	chmod 0755 /usr/local/sbin/enable-proxmox-wol
+	cat > /etc/systemd/system/proxmox-wol.service <<EOF
+[Unit]
+Description=Enable Wake-on-LAN for ${wol_interface}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/enable-proxmox-wol ${wol_interface}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	systemctl daemon-reload
+	systemctl enable --now proxmox-wol.service
+fi
+
 echo
 echo "Proxmox preparation complete."
-echo "Deployment user: ${deploy_user}"
+echo "Proxmox API user: ${pve_api_user}@pve"
+echo "Proxmox API token ID: ${pve_api_user}@pve!deploy"
+echo "Proxmox API token secret: ${token_secret}"
