@@ -38,7 +38,7 @@ parse_connection() {
 	fi
 }
 
-connection=$(prompt_required "SSH connection (user@host, ssh://user@host, or SSH config alias)")
+connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, or SSH config alias)")
 parse_connection "${connection}"
 
 deploy_user=$(prompt_required "Deployment username")
@@ -55,73 +55,31 @@ public_key=$(<"${key_path}")
 [[ -n "${public_key}" ]] || die "Public key file is empty."
 
 configure_tailscale=false
+tailscale_tag=
+tailscale_hostname=
 read -r -p "Install and configure Tailscale on the Proxmox host? [y/N]: " tailscale_answer
 if [[ "${tailscale_answer}" =~ ^[Yy]$ ]]; then
 	configure_tailscale=true
+	read -r -p "Tailscale tag (optional, e.g. tag:proxmox): " tailscale_tag
+	read -r -p "Tailscale name (optional, leave blank for default): " tailscale_hostname
 fi
 
 echo
 echo "The script will connect to ${SSH_TARGET} and prepare Proxmox VE."
-echo "The remote sudo prompt, if needed, will appear directly in this terminal."
+echo "The root SSH password will be requested once, directly by SSH."
 read -r -p "Continue? [y/N]: " continue_answer
 [[ "${continue_answer}" =~ ^[Yy]$ ]] || die "Cancelled."
 
-echo "Checking SSH access and sudo availability..."
-ssh "${SSH_OPTIONS[@]}" -tt "${SSH_TARGET}" \
-	'set -e; if [ "$(id -u)" -ne 0 ]; then command -v sudo >/dev/null || { echo "sudo is required for a non-root SSH account." >&2; exit 1; }; sudo -v; fi'
-
-printf -v remote_args '%q ' "${deploy_user}" "${public_key}" "${configure_tailscale}"
-
 echo "Preparing the Proxmox host..."
-ssh "${SSH_OPTIONS[@]}" -tt "${SSH_TARGET}" \
-	"if [ \"\$(id -u)\" -eq 0 ]; then exec bash -s -- ${remote_args}; else exec sudo -n bash -s -- ${remote_args}; fi" <<'REMOTE_SCRIPT'
-set -euo pipefail
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+remote_script=${script_directory}/prepare-proxmox-remote.sh
+[[ -f "${remote_script}" ]] || die "Remote script not found: ${remote_script}"
 
-deploy_user=$1
-public_key=$2
-configure_tailscale=$3
-
-[[ -f /etc/pve/.version ]] || {
-	echo "This host does not appear to be a Proxmox VE node (/etc/pve/.version is missing)." >&2
-	exit 1
-}
-
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install --yes ca-certificates curl openssh-server sudo
-
-if ! id "${deploy_user}" >/dev/null 2>&1; then
-	useradd --create-home --shell /bin/bash "${deploy_user}"
-fi
-
-usermod --lock --shell /bin/bash "${deploy_user}"
-usermod --append --groups sudo "${deploy_user}"
-
-install --directory --owner="${deploy_user}" --group="${deploy_user}" --mode=0700 \
-	"/home/${deploy_user}/.ssh"
-printf '%s\n' "${public_key}" > "/home/${deploy_user}/.ssh/authorized_keys"
-chown "${deploy_user}:${deploy_user}" "/home/${deploy_user}/.ssh/authorized_keys"
-chmod 0600 "/home/${deploy_user}/.ssh/authorized_keys"
-
-printf '%s\n' "${deploy_user} ALL=(ALL:ALL) NOPASSWD: ALL" \
-	> "/etc/sudoers.d/${deploy_user}"
-chmod 0440 "/etc/sudoers.d/${deploy_user}"
-visudo --check --file="/etc/sudoers.d/${deploy_user}"
-
-if [[ "${configure_tailscale}" == true ]]; then
-	if ! command -v tailscale >/dev/null 2>&1; then
-		curl --fail --show-error --silent --location https://tailscale.com/install.sh | sh
-	fi
-	echo "Tailscale will now open its normal authentication flow. Complete it in this terminal."
-	tailscale up
-fi
-
-systemctl enable --now ssh
-
-echo
-echo "Proxmox preparation complete."
-echo "Deployment user: ${deploy_user}"
-REMOTE_SCRIPT
+printf -v remote_args '%q ' \
+	"${deploy_user}" "${public_key}" "${configure_tailscale}" \
+	"${tailscale_tag}" "${tailscale_hostname}"
+ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+	"bash -s -- ${remote_args}" < "${remote_script}"
 
 echo
 echo "Done. Use ${deploy_user}@${SSH_TARGET} for the Proxmox SSH user where the workflow requires it."
