@@ -130,7 +130,7 @@ for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 done
 
 image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" \
-	"pvesh get '/storage/${DOCKER_VM_IMAGE_DATASTORE}' --output-format json" |
+	"pvesh get /storage/${DOCKER_VM_IMAGE_DATASTORE} --output-format json" |
 	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
 	echo "Unable to read content types for Proxmox storage ${DOCKER_VM_IMAGE_DATASTORE}." >&2
@@ -138,7 +138,7 @@ image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" \
 }
 if [[ ",${image_content}," != *,import,* ]]; then
 	ssh "${ssh_options[@]}" "${ssh_target}" \
-		"pvesm set '${DOCKER_VM_IMAGE_DATASTORE}' --content '${image_content},import'"
+		"pvesm set ${DOCKER_VM_IMAGE_DATASTORE} --content ${image_content},import"
 fi
 
 read -r -p "GitHub repository (e.g. fofola1/homelab_devops or https://github.com/fofola1/homelab_devops): " repository_input
