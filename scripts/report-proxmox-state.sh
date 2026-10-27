@@ -102,10 +102,25 @@ for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET GITHUB_PROXMOX_SSH_KEY_PATH \
 	PVE_API_TOKEN_ID PVE_API_TOKEN_SECRET; do
 	[[ -n "${!name:-}" ]] || { echo "${name} is required for deployment." >&2; exit 1; }
 done
-[[ -f "${GITHUB_PROXMOX_SSH_KEY_PATH}" ]] || {
+github_proxmox_ssh_key_file=${GITHUB_PROXMOX_SSH_KEY_PATH}
+temporary_ssh_key_directory=
+if [[ "${GITHUB_PROXMOX_SSH_KEY_PATH}" == generate ]]; then
+	temporary_ssh_key_directory=$(mktemp --directory)
+	github_proxmox_ssh_key_file=${temporary_ssh_key_directory}/id_ed25519
+	ssh-keygen -q -t ed25519 -N '' -f "${github_proxmox_ssh_key_file}" || {
+		rm -rf "${temporary_ssh_key_directory}"
+		exit 1
+	}
+elif [[ ! -f "${GITHUB_PROXMOX_SSH_KEY_PATH}" ]]; then
 	echo "SSH key file not found: ${GITHUB_PROXMOX_SSH_KEY_PATH}" >&2
 	exit 1
+fi
+cleanup_temporary_ssh_key() {
+	if [[ -n "${temporary_ssh_key_directory}" ]]; then
+		rm -rf "${temporary_ssh_key_directory}"
+	fi
 }
+trap cleanup_temporary_ssh_key EXIT
 
 for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {
@@ -146,7 +161,7 @@ done
 
 gh secret set TS_OAUTH_CLIENT_ID --repo "${repository}" --app actions --body "${TS_OAUTH_CLIENT_ID}"
 gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_OAUTH_SECRET}"
-gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${GITHUB_PROXMOX_SSH_KEY_PATH}"
+gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${github_proxmox_ssh_key_file}"
 gh secret set PVE_API_TOKEN_ID --repo "${repository}" --app actions --body "${PVE_API_TOKEN_ID}"
 gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "${PVE_API_TOKEN_SECRET}"
 gh secret set PROXMOX_KNOWN_HOSTS --repo "${repository}" --app actions --body "${values[PROXMOX_KNOWN_HOSTS]}"
