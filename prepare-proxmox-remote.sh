@@ -55,7 +55,10 @@ apt-get update
 apt-get install --yes ca-certificates curl ethtool openssh-server
 
 pveum user add "${pve_api_user}@pve" -comment "GitHub Actions API" 2>/dev/null || true
-pveum acl modify / -user "${pve_api_user}@pve" -role PVEVMAdmin
+# PVEAdmin includes the datastore and VM privileges needed for image download,
+# disk import, template creation, cloning, and cloud-init configuration.
+pveum acl modify / -user "${pve_api_user}@pve" -role PVEAdmin
+pveum user token remove "${pve_api_user}@pve" deploy 2>/dev/null || true
 token_output=$(pveum user token add "${pve_api_user}@pve" deploy --privsep 0 --output-format json)
 token_secret=$(printf '%s' "${token_output}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${token_secret}" ]] || {

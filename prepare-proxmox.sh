@@ -26,6 +26,8 @@ parse_connection() {
 	local connection=$1
 
 	SSH_TARGET=${connection#ssh://}
+	SSH_HOST=${SSH_TARGET#*@}
+	SSH_KNOWN_HOST=${SSH_HOST}
 	SSH_OPTIONS=()
 
 	[[ "${SSH_TARGET}" != -* ]] || die "SSH connection must not begin with an option."
@@ -34,14 +36,54 @@ parse_connection() {
 
 	if [[ "${connection}" == ssh://* && "${SSH_TARGET}" =~ ^(.+):([0-9]+)$ ]]; then
 		SSH_TARGET=${BASH_REMATCH[1]}
+		SSH_HOST=${SSH_TARGET#*@}
+		SSH_KNOWN_HOST="[${SSH_HOST}]:${BASH_REMATCH[2]}"
 		SSH_OPTIONS=(-p "${BASH_REMATCH[2]}")
 	fi
 }
 
+refresh_ssh_host_key() {
+	echo "Refreshing the SSH host key for ${SSH_KNOWN_HOST}..." >&2
+	ssh-keygen -R "${SSH_KNOWN_HOST}" >/dev/null 2>&1 || true
+	SSH_OPTIONS+=( -o StrictHostKeyChecking=accept-new )
+}
+
+prompt_wol_interface() {
+	local interfaces interface_choice interface_index
+
+	interfaces=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+		"ip -o link show | awk -F': ' '\$2 != \"lo\" {sub(/@.*/, \"\", \$2); print \$2}'") || \
+		die "Unable to list network interfaces on ${SSH_TARGET}."
+	[[ -n "${interfaces}" ]] || die "No non-loopback network interfaces found on ${SSH_TARGET}."
+
+	echo "Available interfaces on ${SSH_TARGET}:" >&2
+	interface_index=1
+	while IFS= read -r interface; do
+		printf '  %d) %s\n' "${interface_index}" "${interface}" >&2
+		((++interface_index))
+	done <<< "${interfaces}"
+
+	while :; do
+		read -r -p "Interface number or name: " interface_choice || \
+			die "Input ended before setup was complete."
+		if [[ "${interface_choice}" =~ ^[0-9]+$ ]] &&
+			((interface_choice >= 1 && interface_choice < interface_index)); then
+			printf '%s' "$(printf '%s\n' "${interfaces}" | sed -n "${interface_choice}p")"
+			return
+		fi
+		if printf '%s\n' "${interfaces}" | grep --fixed-strings --line-regexp --quiet -- "${interface_choice}"; then
+			printf '%s' "${interface_choice}"
+			return
+		fi
+		echo "Choose one of the listed interface numbers or names." >&2
+	done
+}
+
 connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, or SSH config alias)")
 parse_connection "${connection}"
+refresh_ssh_host_key
 
-pve_api_user=$(prompt_required "Proxmox API username (without @pve)")
+pve_api_user=$(prompt_required "Proxmox API username (without @pve) for deployment")
 [[ "${pve_api_user}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || \
 	die "Proxmox API username must be a valid user name."
 [[ "${pve_api_user}" != root ]] || die "Do not use the root API account."
@@ -49,7 +91,7 @@ pve_api_user=$(prompt_required "Proxmox API username (without @pve)")
 wol_interface=
 read -r -p "Enable Wake-on-LAN on a Proxmox interface? [y/N]: " wol_answer
 if [[ "${wol_answer}" =~ ^[Yy]$ ]]; then
-	wol_interface=$(prompt_required "Interface name (for example eno1)")
+	wol_interface=$(prompt_wol_interface)
 fi
 
 configure_tailscale=false
