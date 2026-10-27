@@ -1,0 +1,54 @@
+---
+- name: Configure the Docker VM
+  hosts: docker_hosts
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+  tasks:
+    - name: Install host dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - docker.io
+          - docker-compose-v2
+          - python3
+        state: present
+        update_cache: true
+
+    - name: Enable Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add deployment user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Verify Docker service is active
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+      become: true
+      changed_when: false
+
+    - name: Verify Docker installation
+      ansible.builtin.command: docker version
+      become: true
+      become_user: "{{ ansible_user }}"
+      changed_when: false
+
+    - name: Verify Docker Compose installation
+      ansible.builtin.command: docker compose version
+      become: true
+      become_user: "{{ ansible_user }}"
+      changed_when: false
