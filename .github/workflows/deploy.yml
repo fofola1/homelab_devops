@@ -95,7 +95,7 @@ jobs:
                   terraform init
                   terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
             - name: "Upload Terraform Plan"
-              uses: actions/upload-artifact@v7.0.1
+              uses: actions/upload-artifact@v7.0.2
               with:
                   name: terraform-plan
                   path: terraform/tfplan
