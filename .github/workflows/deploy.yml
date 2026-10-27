@@ -90,9 +90,9 @@ jobs:
                   printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
                   auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
                   content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
-                  if ! curl --fail --silent --show-error --header "${auth_header}" "${content_url}" |
+                  if ! curl --insecure --fail --silent --show-error --header "${auth_header}" "${content_url}" |
                       jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" '.data[] | select(.volid == $volume)' >/dev/null; then
-                      curl --fail --silent --show-error --header "${auth_header}" \
+                      curl --insecure --fail --silent --show-error --header "${auth_header}" \
                           --form "content=import" \
                           --form "filename=@${image_path}" \
                           "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
