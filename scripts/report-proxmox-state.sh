@@ -130,6 +130,7 @@ for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 done
 
 storage_query_command="pvesh get /storage/${DOCKER_VM_IMAGE_DATASTORE} --output-format json"
+# shellcheck disable=SC2029
 image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command}" |
 	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
@@ -138,6 +139,7 @@ image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command
 }
 if [[ ",${image_content}," != *,import,* ]]; then
 	storage_content_command="pvesm set ${DOCKER_VM_IMAGE_DATASTORE} --content ${image_content},import"
+	# shellcheck disable=SC2029
 	ssh "${ssh_options[@]}" "${ssh_target}" \
 		"${storage_content_command}"
 fi
