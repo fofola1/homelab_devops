@@ -46,10 +46,6 @@ for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE PROXMOX_VERSION OS_RELEASE CPU CPU_
 	printf '%-22s %s\n' "${name}:" "${values[${name}]:-}"
 done
 
-read -r -p "Add this configuration to a GitHub repository with gh? [y/N]: " publish_answer
-[[ "${publish_answer}" =~ ^[Yy]$ ]] || exit 0
-command -v gh >/dev/null || { echo "gh CLI is required." >&2; exit 1; }
-
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
 [[ -f "${config_file}" ]] || {
@@ -57,21 +53,77 @@ config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
 	exit 1
 }
 echo "Using configuration file: ${config_file}"
-echo "Edit this file to fill in all required details before continuing."
+# shellcheck disable=SC1090
+source "${config_file}"
+
+TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
+PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+
+echo
+echo "Effective GitHub configuration"
+printf '%-32s %s\n' \
+	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
+	PROXMOX_NODE "${PROXMOX_NODE}" \
+	DOCKER_VM_HOST_IP "${DOCKER_VM_HOST_IP:-}" \
+	DOCKER_VM_ID "${DOCKER_VM_ID:-}" \
+	DOCKER_VM_DATASTORE "${DOCKER_VM_DATASTORE:-}" \
+	DOCKER_VM_IMAGE_DATASTORE "${DOCKER_VM_IMAGE_DATASTORE:-}" \
+	DOCKER_VM_IPV4_CIDR "${DOCKER_VM_IPV4_CIDR:-}" \
+	DOCKER_VM_IPV4_GATEWAY "${DOCKER_VM_IPV4_GATEWAY:-}" \
+	DOCKER_VM_DEPLOY_PATH "${DOCKER_VM_DEPLOY_PATH:-}" \
+	DOCKER_VM_DEPLOY_USER "${DOCKER_VM_DEPLOY_USER:-}" \
+	TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
+	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
+	GITHUB_PROXMOX_SSH_KEY_PATH "${GITHUB_PROXMOX_SSH_KEY_PATH:-}" \
+	PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
+	PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}"
+
+read -r -p "Add this configuration to a GitHub repository with gh? [y/N]: " publish_answer
+[[ "${publish_answer}" =~ ^[Yy]$ ]] || exit 0
+command -v gh >/dev/null || { echo "gh CLI is required." >&2; exit 1; }
+
+echo "Edit ${config_file} to fill in all required details before continuing."
 read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
 # shellcheck disable=SC1090
 source "${config_file}"
+TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
+PROXMOX_NODE=${values[PROXMOX_NODE]:-}
 
-TS_PROXMOX_HOSTNAME=${TS_PROXMOX_HOSTNAME:-${values[TS_PROXMOX_HOSTNAME]:-}}
-PROXMOX_NODE=${PROXMOX_NODE:-${values[PROXMOX_NODE]:-}}
-
-for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_ANSIBLE_TARGET_GROUP \
-	DOCKER_VM_HOST_IP DOCKER_VM_TEMPLATE_ID DOCKER_VM_ID DOCKER_VM_DATASTORE \
-	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_NETWORK_BRIDGE \
-	DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER; do
+for name in DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE \
+	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH \
+	DOCKER_VM_DEPLOY_USER; do
 	[[ -n "${!name:-}" ]] || { echo "${name} is required in ${config_file}." >&2; exit 1; }
 done
+for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
+	[[ -n "${!name}" ]] || { echo "Unable to discover ${name} from the Proxmox host." >&2; exit 1; }
+done
+for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET GITHUB_PROXMOX_SSH_KEY_PATH \
+	PVE_API_TOKEN_ID PVE_API_TOKEN_SECRET; do
+	[[ -n "${!name:-}" ]] || { echo "${name} is required for deployment." >&2; exit 1; }
+done
+[[ -f "${GITHUB_PROXMOX_SSH_KEY_PATH}" ]] || {
+	echo "SSH key file not found: ${GITHUB_PROXMOX_SSH_KEY_PATH}" >&2
+	exit 1
+}
+
+for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
+	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+		echo "Invalid Proxmox storage name: ${storage}" >&2
+		exit 1
+	}
+done
+
+image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" \
+	"pvesm config '${DOCKER_VM_IMAGE_DATASTORE}' | awk -F': ' '\$1 == \"content\" {print \$2}'")
+[[ -n "${image_content}" ]] || {
+	echo "Unable to read content types for Proxmox storage ${DOCKER_VM_IMAGE_DATASTORE}." >&2
+	exit 1
+}
+if [[ ",${image_content}," != *,import,* ]]; then
+	ssh "${ssh_options[@]}" "${ssh_target}" \
+		"pvesm set '${DOCKER_VM_IMAGE_DATASTORE}' --content '${image_content},import'"
+fi
 
 read -r -p "GitHub repository (e.g. fofola1/homelab_devops or https://github.com/fofola1/homelab_devops): " repository_input
 [[ -n "${repository_input}" ]] || { echo "Repository is required." >&2; exit 1; }
@@ -87,29 +139,15 @@ fi
 	exit 1
 }
 
-variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_ANSIBLE_TARGET_GROUP DOCKER_VM_HOST_IP DOCKER_VM_TEMPLATE_ID DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_NETWORK_BRIDGE DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
+variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
 for name in "${variables[@]}"; do
 	gh variable set "${name}" --repo "${repository}" --body "${!name:-${values[${name}]:-}}"
 done
 
-if [[ -n "${TS_OAUTH_CLIENT_ID:-}" ]]; then
-	gh secret set TS_OAUTH_CLIENT_ID --repo "${repository}" --app actions --body "${TS_OAUTH_CLIENT_ID}"
-	[[ -n "${TS_OAUTH_SECRET:-}" ]] || { echo "TS_OAUTH_SECRET is required when TS_OAUTH_CLIENT_ID is set." >&2; exit 1; }
-	gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_OAUTH_SECRET}"
-fi
-
-if [[ -n "${PROXMOX_SSH_KEY_PATH:-}" ]]; then
-	gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${PROXMOX_SSH_KEY_PATH}"
-fi
-if [[ -n "${PVE_API_TOKEN_ID:-}" && -n "${PVE_API_TOKEN_SECRET:-}" ]]; then
-	gh secret set PVE_API_TOKEN_ID --repo "${repository}" --app actions --body "${PVE_API_TOKEN_ID}"
-	gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "${PVE_API_TOKEN_SECRET}"
-else
-	echo "Skipping Proxmox API token secrets because they were not provided."
-fi
+gh secret set TS_OAUTH_CLIENT_ID --repo "${repository}" --app actions --body "${TS_OAUTH_CLIENT_ID}"
+gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_OAUTH_SECRET}"
+gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${GITHUB_PROXMOX_SSH_KEY_PATH}"
+gh secret set PVE_API_TOKEN_ID --repo "${repository}" --app actions --body "${PVE_API_TOKEN_ID}"
+gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "${PVE_API_TOKEN_SECRET}"
 gh secret set PROXMOX_KNOWN_HOSTS --repo "${repository}" --app actions --body "${values[PROXMOX_KNOWN_HOSTS]}"
-
-if [[ -n "${DOCKER_VM_KNOWN_HOSTS:-}" ]]; then
-	gh secret set DOCKER_VM_KNOWN_HOSTS --repo "${repository}" --app actions --body "${DOCKER_VM_KNOWN_HOSTS}"
-fi
 echo "GitHub repository configuration updated: ${repository}"

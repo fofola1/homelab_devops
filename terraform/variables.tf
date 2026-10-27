@@ -16,13 +16,15 @@ variable "proxmox_node" {
   type = string
 }
 
-variable "proxmox_ssh_user" {
-  type    = string
-  default = "root"
-}
-
-variable "template_vm_id" {
-  type = number
+variable "template" {
+  type = object({
+    name                     = string
+    vm_id                    = number
+    image_url                = string
+    image_file_name          = string
+    image_checksum           = optional(string)
+    image_checksum_algorithm = optional(string)
+  })
 }
 
 variable "vm_id" {
@@ -50,6 +52,10 @@ variable "vm_disk_gb" {
 }
 
 variable "vm_datastore" {
+  type = string
+}
+
+variable "vm_image_datastore" {
   type = string
 }
 
