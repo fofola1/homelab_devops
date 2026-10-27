@@ -77,7 +77,7 @@ jobs:
             - name: "Upload Debian image to Proxmox"
               env:
                   PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
-                  PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
+                  PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
                   PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
                   IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
                   IMAGE_URL: https://cloud.debian.org/images/cloud/bookworm/20261026-2643/debian-12-genericcloud-amd64-20261026-2643.qcow2
@@ -90,9 +90,13 @@ jobs:
                   printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
                   auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
                   content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
-                  if ! curl --insecure --fail --silent --show-error --header "${auth_header}" "${content_url}" |
-                      jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" '.data[] | select(.volid == $volume)' >/dev/null; then
-                      curl --insecure --fail --silent --show-error --header "${auth_header}" \
+                  content_response=$(mktemp)
+                  trap 'rm -f "${content_response}"' EXIT
+                  curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
+                      "${content_url}" > "${content_response}"
+                  if ! jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" \
+                      '.data[] | select(.volid == $volume)' "${content_response}" >/dev/null; then
+                      curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
                           --form "content=import" \
                           --form "filename=@${image_path}" \
                           "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
