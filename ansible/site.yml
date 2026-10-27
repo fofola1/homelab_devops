@@ -34,15 +34,21 @@
         append: true
 
     - name: Verify Docker service is active
-      ansible.builtin.command: systemctl is-active docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+      become: true
       changed_when: false
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
+      become: true
       become_user: "{{ ansible_user }}"
       changed_when: false
 
     - name: Verify Docker Compose installation
       ansible.builtin.command: docker compose version
+      become: true
       become_user: "{{ ansible_user }}"
       changed_when: false

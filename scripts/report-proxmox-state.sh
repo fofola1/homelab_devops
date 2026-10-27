@@ -130,7 +130,8 @@ for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 done
 
 image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" \
-	"pvesh get '/storage/${DOCKER_VM_IMAGE_DATASTORE}' --output-format json | sed -n 's/.*\"content\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p'")
+	"pvesh get '/storage/${DOCKER_VM_IMAGE_DATASTORE}' --output-format json" |
+	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
 	echo "Unable to read content types for Proxmox storage ${DOCKER_VM_IMAGE_DATASTORE}." >&2
 	exit 1
