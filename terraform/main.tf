@@ -15,17 +15,6 @@ provider "proxmox" {
   insecure  = var.proxmox_tls_insecure
 }
 
-resource "proxmox_virtual_environment_download_file" "template_image" {
-  content_type = "import"
-  datastore_id = var.vm_image_datastore
-  file_name    = var.template.image_file_name
-  node_name    = var.proxmox_node
-  url          = var.template.image_url
-
-  checksum           = var.template.image_checksum
-  checksum_algorithm = var.template.image_checksum_algorithm
-}
-
 resource "proxmox_virtual_environment_vm" "template" {
   name      = var.template.name
   node_name = var.proxmox_node
@@ -44,7 +33,7 @@ resource "proxmox_virtual_environment_vm" "template" {
   disk {
     datastore_id = var.vm_datastore
     file_format  = "qcow2"
-    import_from  = proxmox_virtual_environment_download_file.template_image.id
+    import_from  = "${var.vm_image_datastore}:import/${var.template.image_file_name}"
     interface    = "scsi0"
   }
 

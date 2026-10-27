@@ -74,6 +74,29 @@ jobs:
                   set -euo pipefail
                   public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
+            - name: "Upload Debian image to Proxmox"
+              env:
+                  PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
+                  PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
+                  IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
+                  IMAGE_URL: https://cloud.debian.org/images/cloud/bookworm/20261026-2643/debian-12-genericcloud-amd64-20261026-2643.qcow2
+                  IMAGE_FILE_NAME: debian-12-genericcloud-amd64.qcow2
+                  IMAGE_SHA512: 0464b5d4ae3aa4f658468d88da83af7857b71548b30d46dcb6282770955a747fb95a983476db90d25afd0653af607224c7ebd05122ab71faa106fd712aaad652
+              run: |
+                  set -euo pipefail
+                  image_path="${RUNNER_TEMP}/${IMAGE_FILE_NAME}"
+                  curl --fail --location --retry 5 --output "${image_path}" "${IMAGE_URL}"
+                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
+                  auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
+                  content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
+                  if ! curl --fail --silent --show-error --header "${auth_header}" "${content_url}" |
+                      jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" '.data[] | select(.volid == $volume)' >/dev/null; then
+                      curl --fail --silent --show-error --header "${auth_header}" \
+                          --form "content=import" \
+                          --form "filename=@${image_path}" \
+                          "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
+                  fi
             - name: "Terraform Init & Plan"
               env:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
