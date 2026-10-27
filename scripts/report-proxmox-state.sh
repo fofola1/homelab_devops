@@ -168,5 +168,7 @@ gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_
 gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${github_proxmox_ssh_key_file}"
 gh secret set PVE_API_TOKEN_ID --repo "${repository}" --app actions --body "${PVE_API_TOKEN_ID}"
 gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "${PVE_API_TOKEN_SECRET}"
+gh secret set PVE_API_TOKEN --repo "${repository}" --app actions \
+	--body "${PVE_API_TOKEN_ID}=${PVE_API_TOKEN_SECRET}"
 gh secret set PROXMOX_KNOWN_HOSTS --repo "${repository}" --app actions --body "${values[PROXMOX_KNOWN_HOSTS]}"
 echo "GitHub repository configuration updated: ${repository}"
