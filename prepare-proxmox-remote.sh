@@ -58,6 +58,9 @@ pveum user add "${pve_api_user}@pve" -comment "GitHub Actions API" 2>/dev/null |
 # PVEAdmin includes the datastore and VM privileges needed for image download,
 # disk import, template creation, cloning, and cloud-init configuration.
 pveum acl modify / -user "${pve_api_user}@pve" -role PVEAdmin
+# Explicitly grant the same role on /sdn so VM NIC attach can use SDN-backed
+# bridges (requires SDN.Use on /sdn/zones/... paths).
+pveum acl modify /sdn -user "${pve_api_user}@pve" -role PVEAdmin
 pveum user token remove "${pve_api_user}@pve" deploy 2>/dev/null || true
 token_output=$(pveum user token add "${pve_api_user}@pve" deploy --privsep 0 --output-format json)
 token_secret=$(printf '%s' "${token_output}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
