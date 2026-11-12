@@ -13,19 +13,72 @@
       armv7l: armhf
     docker_apt_architecture: "{{ docker_apt_architectures.get(ansible_architecture, ansible_architecture) }}"
     docker_vm_deploy_path: "{{ lookup('env', 'DOCKER_VM_DEPLOY_PATH') }}"
+    docker_vm_ipv4_gateway: "{{ lookup('env', 'DOCKER_VM_IPV4_GATEWAY') }}"
 
   pre_tasks:
     - name: Wait for cloud-init to finish
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
 
-    - name: Verify the deployment path is configured
+    - name: Verify the deployment settings are configured
       ansible.builtin.assert:
         that:
           - docker_vm_deploy_path | length > 0
-        fail_msg: "DOCKER_VM_DEPLOY_PATH must point to the Docker compose deployment directory."
+          - docker_vm_ipv4_gateway | length > 0
+        fail_msg: "DOCKER_VM_DEPLOY_PATH and DOCKER_VM_IPV4_GATEWAY must be set."
 
   tasks:
+    - name: Inspect the VM network configuration
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - ip -brief address
+        - ip route
+        - cat /etc/resolv.conf
+      register: network_configuration
+      changed_when: false
+      failed_when: false
+
+    - name: Show the VM network configuration
+      ansible.builtin.debug:
+        msg: "{{ network_configuration.results | map(attribute='stdout_lines') | list }}"
+
+    - name: Configure DNS resolvers
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ docker_vm_ipv4_gateway }}
+          nameserver 1.1.1.1
+
+    - name: Verify DNS resolution
+      ansible.builtin.command:
+        cmd: timeout 15 getent ahostsv4 deb.debian.org
+      register: dns_resolution
+      changed_when: false
+      retries: 3
+      delay: 2
+      until: dns_resolution.rc == 0
+
+    - name: Bound APT network timeouts
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99homelab-network
+        mode: "0644"
+        content: |
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          Acquire::Retries "2";
+
+    - name: Update the APT cache
+      ansible.builtin.command:
+        cmd: timeout 180 apt-get update
+      register: apt_cache_update
+      changed_when: false
+      retries: 3
+      delay: 5
+      until: apt_cache_update.rc == 0
+
     - name: Install base dependencies
       ansible.builtin.apt:
         name:
@@ -34,7 +87,6 @@
           - python3
           - rsync
         state: present
-        update_cache: true
 
     - name: Remove distribution Docker packages that conflict with Docker Engine
       ansible.builtin.apt:
