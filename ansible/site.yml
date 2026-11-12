@@ -4,42 +4,99 @@
   become: true
   gather_facts: true
 
+  vars:
+    docker_apt_keyring_directory: /etc/apt/keyrings
+    docker_apt_keyring: /etc/apt/keyrings/docker.asc
+    docker_apt_architectures:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+    docker_apt_architecture: "{{ docker_apt_architectures.get(ansible_architecture, ansible_architecture) }}"
+    docker_vm_deploy_path: "{{ lookup('env', 'DOCKER_VM_DEPLOY_PATH') }}"
+
   pre_tasks:
     - name: Wait for cloud-init to finish
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
 
+    - name: Verify the deployment path is configured
+      ansible.builtin.assert:
+        that:
+          - docker_vm_deploy_path | length > 0
+        fail_msg: "DOCKER_VM_DEPLOY_PATH must point to the Docker compose deployment directory."
+
   tasks:
-    - name: Install host dependencies
+    - name: Install base dependencies
       ansible.builtin.apt:
         name:
           - ca-certificates
           - curl
-          - docker.io
-          - docker-compose-v2
           - python3
+          - rsync
+        state: present
+        update_cache: true
+
+    - name: Remove distribution Docker packages that conflict with Docker Engine
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose
+        state: absent
+
+    - name: Create the Docker apt keyring directory
+      ansible.builtin.file:
+        path: "{{ docker_apt_keyring_directory }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: "{{ docker_apt_keyring }}"
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/debian
+          Suites: {{ ansible_distribution_release }}
+          Components: stable
+          Architectures: {{ docker_apt_architecture }}
+          Signed-By: {{ docker_apt_keyring }}
+
+    - name: Install Docker Engine and the Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
         state: present
         update_cache: true
 
     - name: Enable Docker
-      ansible.builtin.service:
+      ansible.builtin.systemd_service:
         name: docker
         state: started
         enabled: true
 
-    - name: Add deployment user to Docker group
+    - name: Add the deployment user to the Docker group
       ansible.builtin.user:
         name: "{{ ansible_user }}"
         groups: docker
         append: true
 
-    - name: Verify Docker service is active
-      ansible.builtin.systemd:
-        name: docker
-        state: started
-        enabled: true
-      become: true
-      changed_when: false
+    - name: Create the Docker deployment directory
+      ansible.builtin.file:
+        path: "{{ docker_vm_deploy_path }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
