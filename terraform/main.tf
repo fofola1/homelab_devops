@@ -32,7 +32,7 @@ resource "proxmox_virtual_environment_vm" "template" {
 
   disk {
     datastore_id = var.vm_datastore
-    file_format  = "qcow2"
+    file_format  = "raw"
     import_from  = "${var.vm_image_datastore}:import/${var.template.image_file_name}"
     interface    = "scsi0"
   }
