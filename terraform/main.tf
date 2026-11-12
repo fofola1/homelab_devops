@@ -82,6 +82,10 @@ resource "proxmox_virtual_environment_vm" "docker" {
   initialization {
     datastore_id = var.vm_datastore
 
+    dns {
+      servers = [var.vm_ipv4_gateway]
+    }
+
     ip_config {
       ipv4 {
         address = "${var.vm_ipv4_address}/${var.vm_ipv4_cidr}"
