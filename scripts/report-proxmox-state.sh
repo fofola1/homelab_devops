@@ -30,7 +30,7 @@ print_value NETWORK_LINKS "$(ip -brief link)"
 print_value WOL "$(for interface in /sys/class/net/*; do name=${interface##*/}; [[ "$name" == lo ]] && continue; printf '%s: ' "$name"; ethtool "$name" 2>/dev/null | awk -F: '/Wake-on/ {gsub(/^ +/, "", $2); print $2}'; done)"
 print_value STORAGE "$(pvesm status)"
 print_value VMS "$(qm list)"
-print_value PROXMOX_KNOWN_HOSTS "$(ssh-keyscan -H "$(hostname -f)" 2>/dev/null)"
+print_value PROXMOX_KNOWN_HOSTS "$(ssh-keyscan -H "$(hostname -f)" "$(hostname -s)" 2>/dev/null | sort -u)"
 EOF
 )
 
@@ -121,6 +121,28 @@ cleanup_temporary_ssh_key() {
 	fi
 }
 trap cleanup_temporary_ssh_key EXIT
+
+github_proxmox_public_key=$(ssh-keygen -y -f "${github_proxmox_ssh_key_file}")
+# shellcheck disable=SC2029
+ssh "${ssh_options[@]}" "${ssh_target}" \
+	"bash -s -- $(printf '%q' "${github_proxmox_public_key}")" <<'EOF'
+set -euo pipefail
+public_key=$1
+install -d -m 0700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 0600 /root/.ssh/authorized_keys
+if ! grep -qxF -- "${public_key}" /root/.ssh/authorized_keys; then
+	printf '%s\n' "${public_key}" >> /root/.ssh/authorized_keys
+fi
+EOF
+if ! ssh "${ssh_options[@]}" -i "${github_proxmox_ssh_key_file}" -o IdentitiesOnly=yes \
+	-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+	"${ssh_target}" true; then
+	echo "Unable to authenticate to ${ssh_target} with the deployment key." >&2
+	echo "Ensure the Proxmox host allows root SSH access with keys (PermitRootLogin prohibit-password)." >&2
+	exit 1
+fi
+echo "Authorized the deployment key for root on ${ssh_target}."
 
 for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {
