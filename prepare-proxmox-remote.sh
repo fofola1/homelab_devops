@@ -62,6 +62,8 @@ pveum role add homelab-terraform --privs "${terraform_privileges}" 2>/dev/null |
 	pveum role modify homelab-terraform --privs "${terraform_privileges}"
 pveum acl modify / -user "${pve_api_user}@pve" -role homelab-terraform
 pveum acl modify /sdn -user "${pve_api_user}@pve" -role homelab-terraform
+# SDN.Use checks the concrete SDN zone/vnet path during VM creation.
+pveum acl modify /sdn/zones/localnetwork/vmbr0 -user "${pve_api_user}@pve" -role homelab-terraform
 pveum user token remove "${pve_api_user}@pve" deploy 2>/dev/null || true
 token_output=$(pveum user token add "${pve_api_user}@pve" deploy --privsep 0 --output-format json)
 token_secret=$(printf '%s' "${token_output}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
