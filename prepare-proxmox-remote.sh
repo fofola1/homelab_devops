@@ -33,6 +33,7 @@ disable_enterprise_sources() {
 
 add_no_subscription_source() {
 	local codename
+	# shellcheck disable=SC1091
 	codename=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")
 
 	if [[ -z "${codename}" ]]; then

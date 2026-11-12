@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_NAME=$(basename "$0")
+SCRIPT_NAME=$(basename "$0")
+readonly SCRIPT_NAME
 
 die() {
 	echo "${SCRIPT_NAME}: $*" >&2
@@ -118,6 +119,7 @@ remote_script=${script_directory}/prepare-proxmox-remote.sh
 printf -v remote_args '%q ' \
 	"${pve_api_user}" "${configure_tailscale}" "${tailscale_tag}" \
 	"${tailscale_hostname}" "${wol_interface}"
+# shellcheck disable=SC2029
 remote_output=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
 	"bash -s -- ${remote_args}" < "${remote_script}")
 printf '%s\n' "${remote_output}" | sed '/^Proxmox API token secret:/d'
