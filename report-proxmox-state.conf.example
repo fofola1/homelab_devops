@@ -1,4 +1,5 @@
-# Values in this file describe the Docker VM that Terraform will create.
+# Copy this file to report-proxmox-state.conf and fill it in.
+# The real file is gitignored because it can contain OAuth credentials.
 # Proxmox hostname, Proxmox node, host keys, and API token values are discovered
 # by the setup/report scripts and should not be copied into this file.
 
@@ -13,6 +14,7 @@ DOCKER_VM_IMAGE_DATASTORE=
 # Optional: prefix length for DOCKER_VM_HOST_IP; 24 means a 255.255.255.0 LAN.
 DOCKER_VM_IPV4_CIDR=24
 # Required: LAN gateway reachable by the Docker VM (for example, 192.168.1.1).
+# Also used as the VM's first DNS server.
 DOCKER_VM_IPV4_GATEWAY=
 # Required: directory on the Docker VM where the contents of docker/ will be deployed.
 DOCKER_VM_DEPLOY_PATH=
@@ -21,10 +23,8 @@ DOCKER_VM_DEPLOY_USER=
 
 # Required by every GitHub Actions deployment job to join the Tailscale network.
 # Create an OAuth client in Tailscale with permission to authenticate the tagged runner.
+# Set these here or export them in your shell (exported values are used when empty).
 TS_OAUTH_CLIENT_ID=
 TS_OAUTH_SECRET=
 # Required: local private-key path, or "generate" to create a temporary Ed25519 key automatically.
 GITHUB_PROXMOX_SSH_KEY_PATH=generate
-
-
-

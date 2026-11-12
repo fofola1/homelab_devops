@@ -18,7 +18,14 @@ set -euo pipefail
 print_value() {
 	printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | base64 -w0)"
 }
-print_value TS_PROXMOX_HOSTNAME "$(hostname -f)"
+proxmox_hostname=$(hostname -f)
+if command -v tailscale >/dev/null 2>&1; then
+	tailscale_address=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
+	if [[ -n "${tailscale_address}" ]]; then
+		proxmox_hostname=${tailscale_address}
+	fi
+fi
+print_value TS_PROXMOX_HOSTNAME "${proxmox_hostname}"
 print_value PROXMOX_NODE "$(hostname -s)"
 print_value PROXMOX_VERSION "$(pveversion --verbose | head -n 1)"
 print_value OS_RELEASE "$(. /etc/os-release && printf '%s %s' "$PRETTY_NAME" "$VERSION_ID")"
@@ -50,14 +57,23 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
 [[ -f "${config_file}" ]] || {
 	echo "Configuration file not found: ${config_file}" >&2
+	echo "Copy report-proxmox-state.conf.example to report-proxmox-state.conf and fill it in." >&2
 	exit 1
 }
 echo "Using configuration file: ${config_file}"
-# shellcheck disable=SC1090
-source "${config_file}"
 
-TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
-PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+load_config() {
+	local exported_client_id=${TS_OAUTH_CLIENT_ID:-}
+	local exported_client_secret=${TS_OAUTH_SECRET:-}
+	# shellcheck disable=SC1090
+	source "${config_file}"
+	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
+	TS_OAUTH_SECRET=${TS_OAUTH_SECRET:-${exported_client_secret}}
+	TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
+	PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+}
+
+load_config
 
 echo
 echo "Effective GitHub configuration"
@@ -85,10 +101,7 @@ command -v gh >/dev/null || { echo "gh CLI is required." >&2; exit 1; }
 echo "Edit ${config_file} to fill in all required details before continuing."
 read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
-# shellcheck disable=SC1090
-source "${config_file}"
-TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
-PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+load_config
 
 for name in DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE \
 	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH \

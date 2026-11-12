@@ -126,6 +126,12 @@ printf '%s\n' "${remote_output}" | sed '/^Proxmox API token secret:/d'
 api_token_secret=$(printf '%s\n' "${remote_output}" | sed -n 's/^Proxmox API token secret: //p')
 [[ -n "${api_token_secret}" ]] || die "Remote setup did not return the Proxmox API token secret."
 
+config_file=${script_directory}/report-proxmox-state.conf
+if [[ ! -f "${config_file}" && -f "${config_file}.example" ]]; then
+	cp "${config_file}.example" "${config_file}"
+	echo "Created ${config_file}; fill it in when prompted." >&2
+fi
+
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
