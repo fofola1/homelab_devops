@@ -142,6 +142,15 @@
         groups: docker
         append: true
 
+    - name: Refresh the connection so the Docker group is applied
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify the deployment user is in the Docker group
+      ansible.builtin.command: id -nG {{ ansible_user }}
+      register: deployment_user_groups
+      changed_when: false
+      failed_when: "'docker' not in deployment_user_groups.stdout.split()"
+
     - name: Create the Docker deployment directory
       ansible.builtin.file:
         path: "{{ docker_vm_deploy_path }}"
@@ -152,12 +161,8 @@
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
-      become: true
-      become_user: "{{ ansible_user }}"
       changed_when: false
 
     - name: Verify Docker Compose installation
       ansible.builtin.command: docker compose version
-      become: true
-      become_user: "{{ ansible_user }}"
       changed_when: false
