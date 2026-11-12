@@ -4,51 +4,165 @@
   become: true
   gather_facts: true
 
+  vars:
+    docker_apt_keyring_directory: /etc/apt/keyrings
+    docker_apt_keyring: /etc/apt/keyrings/docker.asc
+    docker_apt_architectures:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+    docker_apt_architecture: "{{ docker_apt_architectures.get(ansible_architecture, ansible_architecture) }}"
+    docker_vm_deploy_path: "{{ lookup('env', 'DOCKER_VM_DEPLOY_PATH') }}"
+    docker_vm_ipv4_gateway: "{{ lookup('env', 'DOCKER_VM_IPV4_GATEWAY') }}"
+
   pre_tasks:
     - name: Wait for cloud-init to finish
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
 
+    - name: Verify the deployment settings are configured
+      ansible.builtin.assert:
+        that:
+          - docker_vm_deploy_path | length > 0
+          - docker_vm_ipv4_gateway | length > 0
+        fail_msg: "DOCKER_VM_DEPLOY_PATH and DOCKER_VM_IPV4_GATEWAY must be set."
+
   tasks:
-    - name: Install host dependencies
+    - name: Inspect the VM network configuration
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - ip -brief address
+        - ip route
+        - cat /etc/resolv.conf
+      register: network_configuration
+      changed_when: false
+      failed_when: false
+
+    - name: Show the VM network configuration
+      ansible.builtin.debug:
+        msg: "{{ network_configuration.results | map(attribute='stdout_lines') | list }}"
+
+    - name: Configure DNS resolvers
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ docker_vm_ipv4_gateway }}
+          nameserver 1.1.1.1
+
+    - name: Verify DNS resolution
+      ansible.builtin.command:
+        cmd: timeout 15 getent ahostsv4 deb.debian.org
+      register: dns_resolution
+      changed_when: false
+      retries: 3
+      delay: 2
+      until: dns_resolution.rc == 0
+
+    - name: Bound APT network timeouts
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99homelab-network
+        mode: "0644"
+        content: |
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          Acquire::Retries "2";
+
+    - name: Update the APT cache
+      ansible.builtin.command:
+        cmd: timeout 180 apt-get update
+      register: apt_cache_update
+      changed_when: false
+      retries: 3
+      delay: 5
+      until: apt_cache_update.rc == 0
+
+    - name: Install base dependencies
       ansible.builtin.apt:
         name:
           - ca-certificates
           - curl
-          - docker.io
-          - docker-compose-v2
           - python3
+          - rsync
+        state: present
+
+    - name: Remove distribution Docker packages that conflict with Docker Engine
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose
+        state: absent
+
+    - name: Create the Docker apt keyring directory
+      ansible.builtin.file:
+        path: "{{ docker_apt_keyring_directory }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: "{{ docker_apt_keyring }}"
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/debian
+          Suites: {{ ansible_distribution_release }}
+          Components: stable
+          Architectures: {{ docker_apt_architecture }}
+          Signed-By: {{ docker_apt_keyring }}
+
+    - name: Install Docker Engine and the Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
         state: present
         update_cache: true
 
     - name: Enable Docker
-      ansible.builtin.service:
+      ansible.builtin.systemd_service:
         name: docker
         state: started
         enabled: true
 
-    - name: Add deployment user to Docker group
+    - name: Add the deployment user to the Docker group
       ansible.builtin.user:
         name: "{{ ansible_user }}"
         groups: docker
         append: true
 
-    - name: Verify Docker service is active
-      ansible.builtin.systemd:
-        name: docker
-        state: started
-        enabled: true
-      become: true
+    - name: Refresh the connection so the Docker group is applied
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify the deployment user is in the Docker group
+      ansible.builtin.command: id -nG {{ ansible_user }}
+      register: deployment_user_groups
       changed_when: false
+      failed_when: "'docker' not in deployment_user_groups.stdout.split()"
+
+    - name: Create the Docker deployment directory
+      ansible.builtin.file:
+        path: "{{ docker_vm_deploy_path }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
-      become: true
-      become_user: "{{ ansible_user }}"
       changed_when: false
 
     - name: Verify Docker Compose installation
       ansible.builtin.command: docker compose version
-      become: true
-      become_user: "{{ ansible_user }}"
       changed_when: false

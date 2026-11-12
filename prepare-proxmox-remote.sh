@@ -33,6 +33,7 @@ disable_enterprise_sources() {
 
 add_no_subscription_source() {
 	local codename
+	# shellcheck disable=SC1091
 	codename=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")
 
 	if [[ -z "${codename}" ]]; then
@@ -57,10 +58,13 @@ apt-get install --yes ca-certificates curl ethtool openssh-server
 pveum user add "${pve_api_user}@pve" -comment "GitHub Actions API" 2>/dev/null || true
 # query-url requires Sys.Modify in addition to the storage and VM privileges.
 # Keep this role scoped to the Terraform operations instead of granting Administrator.
-terraform_privileges='Sys.Audit Sys.Modify Datastore.Audit Datastore.AllocateSpace Datastore.AllocateTemplate VM.Audit VM.Allocate VM.Clone VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt'
+terraform_privileges='Sys.Audit Sys.Modify Datastore.Audit Datastore.AllocateSpace Datastore.AllocateTemplate VM.Audit VM.Allocate VM.Clone VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt SDN.Use'
 pveum role add homelab-terraform --privs "${terraform_privileges}" 2>/dev/null || \
 	pveum role modify homelab-terraform --privs "${terraform_privileges}"
 pveum acl modify / -user "${pve_api_user}@pve" -role homelab-terraform
+pveum acl modify /sdn -user "${pve_api_user}@pve" -role homelab-terraform
+# SDN.Use checks the concrete SDN zone/vnet path during VM creation.
+pveum acl modify /sdn/zones/localnetwork/vmbr0 -user "${pve_api_user}@pve" -role homelab-terraform
 pveum user token remove "${pve_api_user}@pve" deploy 2>/dev/null || true
 token_output=$(pveum user token add "${pve_api_user}@pve" deploy --privsep 0 --output-format json)
 token_secret=$(printf '%s' "${token_output}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')

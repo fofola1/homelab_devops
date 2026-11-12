@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_NAME=$(basename "$0")
+SCRIPT_NAME=$(basename "$0")
+readonly SCRIPT_NAME
 
 die() {
 	echo "${SCRIPT_NAME}: $*" >&2
@@ -118,11 +119,18 @@ remote_script=${script_directory}/prepare-proxmox-remote.sh
 printf -v remote_args '%q ' \
 	"${pve_api_user}" "${configure_tailscale}" "${tailscale_tag}" \
 	"${tailscale_hostname}" "${wol_interface}"
+# shellcheck disable=SC2029
 remote_output=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
 	"bash -s -- ${remote_args}" < "${remote_script}")
 printf '%s\n' "${remote_output}" | sed '/^Proxmox API token secret:/d'
 api_token_secret=$(printf '%s\n' "${remote_output}" | sed -n 's/^Proxmox API token secret: //p')
 [[ -n "${api_token_secret}" ]] || die "Remote setup did not return the Proxmox API token secret."
+
+config_file=${script_directory}/report-proxmox-state.conf
+if [[ ! -f "${config_file}" && -f "${config_file}.example" ]]; then
+	cp "${config_file}.example" "${config_file}"
+	echo "Created ${config_file}; fill it in when prompted." >&2
+fi
 
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"

@@ -18,7 +18,14 @@ set -euo pipefail
 print_value() {
 	printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | base64 -w0)"
 }
-print_value TS_PROXMOX_HOSTNAME "$(hostname -f)"
+proxmox_hostname=$(hostname -f)
+if command -v tailscale >/dev/null 2>&1; then
+	tailscale_address=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
+	if [[ -n "${tailscale_address}" ]]; then
+		proxmox_hostname=${tailscale_address}
+	fi
+fi
+print_value TS_PROXMOX_HOSTNAME "${proxmox_hostname}"
 print_value PROXMOX_NODE "$(hostname -s)"
 print_value PROXMOX_VERSION "$(pveversion --verbose | head -n 1)"
 print_value OS_RELEASE "$(. /etc/os-release && printf '%s %s' "$PRETTY_NAME" "$VERSION_ID")"
@@ -30,7 +37,7 @@ print_value NETWORK_LINKS "$(ip -brief link)"
 print_value WOL "$(for interface in /sys/class/net/*; do name=${interface##*/}; [[ "$name" == lo ]] && continue; printf '%s: ' "$name"; ethtool "$name" 2>/dev/null | awk -F: '/Wake-on/ {gsub(/^ +/, "", $2); print $2}'; done)"
 print_value STORAGE "$(pvesm status)"
 print_value VMS "$(qm list)"
-print_value PROXMOX_KNOWN_HOSTS "$(ssh-keyscan -H "$(hostname -f)" 2>/dev/null)"
+print_value PROXMOX_KNOWN_HOSTS "$(ssh-keyscan -H "$(hostname -f)" "$(hostname -s)" 2>/dev/null | sort -u)"
 EOF
 )
 
@@ -50,14 +57,23 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
 [[ -f "${config_file}" ]] || {
 	echo "Configuration file not found: ${config_file}" >&2
+	echo "Copy report-proxmox-state.conf.example to report-proxmox-state.conf and fill it in." >&2
 	exit 1
 }
 echo "Using configuration file: ${config_file}"
-# shellcheck disable=SC1090
-source "${config_file}"
 
-TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
-PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+load_config() {
+	local exported_client_id=${TS_OAUTH_CLIENT_ID:-}
+	local exported_client_secret=${TS_OAUTH_SECRET:-}
+	# shellcheck disable=SC1090
+	source "${config_file}"
+	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
+	TS_OAUTH_SECRET=${TS_OAUTH_SECRET:-${exported_client_secret}}
+	TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
+	PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+}
+
+load_config
 
 echo
 echo "Effective GitHub configuration"
@@ -85,10 +101,7 @@ command -v gh >/dev/null || { echo "gh CLI is required." >&2; exit 1; }
 echo "Edit ${config_file} to fill in all required details before continuing."
 read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
-# shellcheck disable=SC1090
-source "${config_file}"
-TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
-PROXMOX_NODE=${values[PROXMOX_NODE]:-}
+load_config
 
 for name in DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE \
 	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH \
@@ -121,6 +134,28 @@ cleanup_temporary_ssh_key() {
 	fi
 }
 trap cleanup_temporary_ssh_key EXIT
+
+github_proxmox_public_key=$(ssh-keygen -y -f "${github_proxmox_ssh_key_file}")
+# shellcheck disable=SC2029
+ssh "${ssh_options[@]}" "${ssh_target}" \
+	"bash -s -- $(printf '%q' "${github_proxmox_public_key}")" <<'EOF'
+set -euo pipefail
+public_key=$1
+install -d -m 0700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 0600 /root/.ssh/authorized_keys
+if ! grep -qxF -- "${public_key}" /root/.ssh/authorized_keys; then
+	printf '%s\n' "${public_key}" >> /root/.ssh/authorized_keys
+fi
+EOF
+if ! ssh "${ssh_options[@]}" -i "${github_proxmox_ssh_key_file}" -o IdentitiesOnly=yes \
+	-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+	"${ssh_target}" true; then
+	echo "Unable to authenticate to ${ssh_target} with the deployment key." >&2
+	echo "Ensure the Proxmox host allows root SSH access with keys (PermitRootLogin prohibit-password)." >&2
+	exit 1
+fi
+echo "Authorized the deployment key for root on ${ssh_target}."
 
 for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
 	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {

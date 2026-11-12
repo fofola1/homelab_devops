@@ -2,7 +2,7 @@ name: "CI - Validate"
 
 on:
     push:
-        branches: [main]
+        branches: [main, dev]
     pull_request:
         branches: [main, dev]
 
@@ -20,7 +20,10 @@ jobs:
             - name: "Load tool versions"
               id: versions
               run: |
-                  echo "terraform_version=$(awk -F= '$1 == \"TERRAFORM_VERSION\" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  source .github/versions.env
+                  test -n "${TERRAFORM_VERSION}"
+                  echo "terraform_version=${TERRAFORM_VERSION}" >> "$GITHUB_OUTPUT"
             - name: "Setup Terraform"
               uses: hashicorp/setup-terraform@v4.0.1
               with:
@@ -30,7 +33,7 @@ jobs:
                   set -euo pipefail
                   test -d terraform
                   cd terraform
-                  terraform fmt -check
+                  terraform fmt -check -recursive
                   terraform init -backend=false
                   terraform validate
 
@@ -43,7 +46,10 @@ jobs:
             - name: "Load tool versions"
               id: versions
               run: |
-                  echo "python_version=$(awk -F= '$1 == "PYTHON_VERSION" { print $2 }' .github/versions.env)" >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  source .github/versions.env
+                  test -n "${PYTHON_VERSION}"
+                  echo "python_version=${PYTHON_VERSION}" >> "$GITHUB_OUTPUT"
             - name: "Setup Python"
               uses: actions/setup-python@v7
               with:
@@ -83,10 +89,13 @@ jobs:
               run: |
                   set -euo pipefail
                   test -d scripts
-                  scripts=$(find scripts/ -type f -name "*.sh" -print)
-                  test -n "${scripts}"
+                  mapfile -t scripts < <(
+                      find . -maxdepth 1 -type f -name "*.sh" -print
+                      find scripts/ -type f -name "*.sh" -print
+                  )
+                  test "${#scripts[@]}" -gt 0
                   bash scripts/validate-layout.sh
-                  while read -r script; do
+                  for script in "${scripts[@]}"; do
                       echo "Checking $script..."
                       shellcheck "$script"
-                  done <<< "${scripts}"
+                  done
