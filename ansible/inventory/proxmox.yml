@@ -5,3 +5,8 @@ all:
         docker_vm:
           ansible_host: "{{ lookup('env', 'DOCKER_VM_HOST_IP') }}"
           ansible_user: "{{ lookup('env', 'DOCKER_VM_DEPLOY_USER') }}"
+    proxmox_hosts:
+      hosts:
+        proxmox:
+          ansible_host: "{{ lookup('env', 'TS_PROXMOX_HOSTNAME') }}"
+          ansible_user: root
