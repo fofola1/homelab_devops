@@ -50,10 +50,64 @@ jobs:
                       docker:
                           - 'docker/**'
 
+    ansible-host:
+        name: "1. Run Ansible (Host)"
+        timeout-minutes: 90
+        needs: [detect-changes]
+        if: |
+            always() &&
+            (
+                needs.detect-changes.outputs.ansible == 'true' ||
+                needs.detect-changes.outputs.terraform == 'true' ||
+                needs.detect-changes.outputs.force_deploy == 'true'
+            )
+        runs-on: ubuntu-latest
+        environment: prod
+        steps:
+            - name: "Checkout"
+              uses: actions/checkout@v7.0.1
+            - name: "Connect to Tailscale"
+              uses: tailscale/github-action@v4.4.0
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+                  tags: tag:proxmox-ci
+            - name: "Setup SSH Agent"
+              uses: webfactory/ssh-agent@v0.10.0
+              with:
+                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Run Ansible Playbook"
+              env:
+                  ANSIBLE_HOST_KEY_CHECKING: "true"
+                  TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
+                  ZFS_POOL_DRIVES: ${{ vars.ZFS_POOL_DRIVES }}
+                  ZFS_POOL_RAID_LEVEL: ${{ vars.ZFS_POOL_RAID_LEVEL }}
+              run: |
+                  # shellcheck disable=SC2029
+                  set -euo pipefail
+                  source .github/versions.env
+                  export TERRAFORM_VERSION ANSIBLE_VERSION
+                  test -s ansible/inventory/proxmox.yml
+                  test -f ansible/host.yml
+                  test -n "${TS_PROXMOX_HOSTNAME}"
+                  mkdir -p ~/.ssh
+                  bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
+                  ssh_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
+                  if ! ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" true; then
+                      echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed."
+                      exit 1
+                  fi
+                  python -m pip install "ansible==${ANSIBLE_VERSION}"
+                  ansible-inventory -i ansible/inventory/proxmox.yml --graph proxmox_hosts
+                  ansible proxmox_hosts -i ansible/inventory/proxmox.yml --list-hosts
+                  ansible_common_args=(--ssh-common-args="-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes")
+                  ansible proxmox_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300' "${ansible_common_args[@]}"
+                  ansible-playbook -i ansible/inventory/proxmox.yml --limit proxmox_hosts "${ansible_common_args[@]}" ansible/host.yml
+
     terraform-plan:
-        name: "0. Terraform Plan"
+        name: "2. Terraform Plan"
         timeout-minutes: 30
-        needs: detect-changes
+        needs: [detect-changes, ansible-host]
         if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         steps:
@@ -137,7 +191,7 @@ jobs:
                   terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
 
     terraform-apply:
-        name: "1. Terraform Apply"
+        name: "3. Terraform Apply"
         timeout-minutes: 45
         needs: [detect-changes, terraform-plan]
         environment: prod
@@ -238,7 +292,7 @@ jobs:
               run: bash scripts/terraform-state.sh save
 
     ansible:
-        name: "2. Run Ansible"
+        name: "4. Run Ansible (Docker)"
         timeout-minutes: 90
         needs: [detect-changes, terraform-apply]
         environment: prod
@@ -324,7 +378,7 @@ jobs:
                       "${ansible_common_args[@]}" ansible/site.yml
 
     docker:
-        name: "3. Deploy Docker Workloads"
+        name: "5. Deploy Docker Workloads"
         timeout-minutes: 30
         needs: [detect-changes, ansible]
         environment: prod
