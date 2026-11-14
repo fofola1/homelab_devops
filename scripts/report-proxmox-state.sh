@@ -18,12 +18,16 @@ set -euo pipefail
 print_value() {
 	printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | base64 -w0)"
 }
-proxmox_hostname=$(hostname -f)
+proxmox_hostname=
 if command -v tailscale >/dev/null 2>&1; then
 	tailscale_address=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
 	if [[ -n "${tailscale_address}" ]]; then
 		proxmox_hostname=${tailscale_address}
 	fi
+fi
+if [[ -z "${proxmox_hostname}" ]]; then
+	# Fallback on the local hostname if Tailscale is not available or no Tailscale IP is found.
+	proxmox_hostname=$(hostname -s)
 fi
 print_value TS_PROXMOX_HOSTNAME "${proxmox_hostname}"
 print_value PROXMOX_NODE "$(hostname -s)"
