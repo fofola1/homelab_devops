@@ -1,0 +1,33 @@
+---
+- name: Configure the Proxmox host
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: true
+
+  vars:
+    zfs_pool_name: tank
+    zfs_pool_drives: "{{ lookup('env', 'ZFS_POOL_DRIVES') | default('', true) | split(',') }}"
+    zfs_pool_raid_level: "{{ lookup('env', 'ZFS_POOL_RAID_LEVEL') | default('raidz1', true) }}"
+
+  tasks:
+    - name: Verify the ZFS pool configuration
+      ansible.builtin.assert:
+        that:
+          - zfs_pool_drives | length > 0
+          - zfs_pool_raid_level | length > 0
+        fail_msg: >-
+          ZFS_POOL_DRIVES must be set to a comma-separated list of whole disk
+          devices for the pool, for example /dev/disk/by-id/scsi-SATA_.... ZFS_POOL_RAID_LEVEL
+          defaults to raidz1 when unset.
+
+    - name: Check ZFS pool status
+      ansible.builtin.command: zpool status {{ zfs_pool_name }}
+      register: zfs_pool_status
+      changed_when: false
+      failed_when: false
+
+    - name: Create ZFS pool
+      ansible.builtin.command: >-
+        zpool create -f -o "raidlevel={{ zfs_pool_raid_level }}" {{ zfs_pool_name }} {{ zfs_pool_drives | join(' ') }}
+      when: zfs_pool_status.rc != 0
+      changed_when: true
