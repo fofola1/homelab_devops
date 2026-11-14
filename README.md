@@ -8,7 +8,7 @@ Terraform provisions a Debian 12 cloud template and a Docker VM on Proxmox, Ansi
 | --- | --- |
 | `.github/workflows/` | CI validation and the CD deployment pipeline. |
 | `terraform/` | Proxmox provider, template profile, VM definition. |
-| `ansible/` | Playbook and inventory that configure the Docker VM. |
+| `ansible/` | Playbooks and inventory that configure the Proxmox host and the Docker VM. |
 | `docker/` | Compose stack that is copied to the VM. |
 | `scripts/` | Terraform-state, known-hosts, and Proxmox setup helpers. |
 | `docs/deployment.md` | Setup, state, networking, and troubleshooting details. |
@@ -19,7 +19,22 @@ Terraform provisions a Debian 12 cloud template and a Docker VM on Proxmox, Ansi
 - **CI - Validate** runs on pushes and pull requests to `main` and `dev` and checks Terraform formatting/validation, Ansible lint, compose file validity, the repository layout, and shell scripts with shellcheck.
 - **CD - Deploy to Proxmox** runs on pushes to `main` or manually with `workflow_dispatch`. The `force_deploy` input deploys every stage even when change detection finds nothing. The default development branch is `dev`, so day-to-day deployments are started manually from it.
 
-The CD pipeline detects changes and then runs four deployment stages: Terraform plan, Terraform apply, Ansible, and the compose deployment. Each deployment stage joins the Tailscale network with the tagged runner identity. The Proxmox node is used as an SSH jump host for the Docker VM, so the VM never needs to be reachable from the public internet.
+The CD pipeline detects changes and then runs five deployment stages: Ansible host, Terraform plan, Terraform apply, Ansible, and the compose deployment. Each deployment stage joins the Tailscale network with the tagged runner identity. The Proxmox node is used as an SSH jump host for the Docker VM, so the VM never needs to be reachable from the public internet.
+
+## ZFS pool
+
+The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).
+
+The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Docker VM disk on the new pool.
+
+Publish the selected drives and the RAID level as repository variables before the first deployment:
+
+```bash
+gh variable set ZFS_POOL_DRIVES --repo fofola1/homelab_devops --body "/dev/disk/by-id/scsi-SATA_..."
+gh variable set ZFS_POOL_RAID_LEVEL --repo fofola1/homelab_devops --body "raidz1"
+```
+
+The pool creation is idempotent: the Ansible play checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
 
 ## First-time setup
 
@@ -48,6 +63,8 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | `DOCKER_VM_IPV4_GATEWAY` | LAN gateway; also used as the VM's DNS server. |
 | `DOCKER_VM_DEPLOY_PATH` | Directory on the VM for the compose stack. |
 | `DOCKER_VM_DEPLOY_USER` | User created by cloud-init for SSH and Ansible. |
+| `ZFS_POOL_DRIVES` | Whole disk devices for the ZFS pool, comma-separated (for example `/dev/disk/by-id/scsi-SATA_...`). |
+| `ZFS_POOL_RAID_LEVEL` | RAID level for the ZFS pool, for example `raidz1`. |
 
 Optionally set `PROXMOX_HOST_KEY_FINGERPRINT` manually to pin the Proxmox host key (see [`docs/deployment.md`](docs/deployment.md)).
 

@@ -1,11 +1,25 @@
 # Deployment
 
-The deployment pipeline is defined in `.github/workflows/deploy.yml` and has four stages:
+The deployment pipeline is defined in `.github/workflows/deploy.yml` and has five stages:
 
-1. **Terraform Plan** validates the Terraform configuration against the current state.
-2. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
-3. **Run Ansible** installs Docker Engine on the new VM and prepares the deployment directory.
-4. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+1. **Run Ansible (Host)** prepares the Proxmox host storage before Terraform runs.
+2. **Terraform Plan** validates the Terraform configuration against the current state.
+3. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
+4. **Run Ansible (Docker)** installs Docker Engine on the new VM and prepares the deployment directory.
+5. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+
+## ZFS pool (host storage)
+
+The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).
+
+The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Docker VM disk on the new pool.
+
+Publish the selected whole disks and the RAID level as repository variables before the first deployment:
+
+```bash
+gh variable set ZFS_POOL_DRIVES --repo fofola1/homelab_devops --body "/dev/disk/by-id/scsi-SATA_..."
+gh variable set ZFS_POOL_RAID_LEVEL --repo fofola1/homelab_devops --body "raidz1"
+```
 
 ## First-time setup
 
@@ -46,6 +60,7 @@ The Docker VM gets a static address, so cloud-init does not learn DNS from DHCP.
 
 ## Recovering from a failed apply
 
+- **ZFS pool creation failed:** check that `ZFS_POOL_DRIVES` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
 - **Host key verification failed:** the workflow now refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
 - **`Failed to update apt cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix `DOCKER_VM_IPV4_GATEWAY`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
 - **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL step could not run. Check the SSH key authorization message and re-run `./prepare-proxmox.sh`.
