@@ -44,11 +44,25 @@ If the deployment SSH key was created by an older version of this repository, re
 
 ## Terraform state
 
-State is stored on the dedicated `terraform-state` branch and is restored at the start of the plan and apply jobs. Do not delete the branch: Terraform would no longer know about the existing template and VM and the next apply would try to create them again.
+State is stored in the S3 backend configured in `terraform/main.tf`, which points at a Cloudflare R2 bucket (S3-compatible API). The plan and apply jobs of the CD pipeline use that backend, so the state is read from and written to the bucket directly.
 
-The state contains only infrastructure attributes (VM configuration and the cloud-init public key). It does not contain the Proxmox API token or any other provider credential.
+The state is mirrored to the dedicated `terraform-state` git branch as well; uploading to that branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable. Do not delete the branch: Terraform would no longer know about the existing template and VM and the next apply would try to create them again.
+
+The state contains only infrastructure attributes (VM configuration and the cloud-init public key). It does not contain the Proxmox API token or any S3 credential.
 
 The plan file is intentionally not uploaded as a workflow artifact. This repository is public and Terraform plan files contain sensitive variable values, so the apply job regenerates the plan locally.
+
+### S3 state backend setup
+
+The optional S3 setup is offered by `./prepare-proxmox.sh` and is configured through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
+
+After configuring the backend, verify it with a test run before relying on it:
+
+```bash
+bash scripts/terraform-state.sh test
+```
+
+The test initializes the Terraform backend and creates an empty state in the bucket, the same way the pipeline initializes the backend. If the test fails, the script exits with an error and no state is used. If it succeeds, the state upload to the `terraform-state` git branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable.
 
 ## SSH host keys
 

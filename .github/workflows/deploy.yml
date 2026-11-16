@@ -110,6 +110,11 @@ jobs:
         needs: [detect-changes, ansible-host]
         if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
+        env:
+            AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_S3_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_S3_KEY_SECRET }}
+            AWS_ENDPOINT_URL_S3: ${{ vars.TF_STATE_S3_URL }}
+            TF_STATE_S3_NAME: ${{ vars.TF_STATE_S3_NAME || 'tfstate' }}
         steps:
             - name: "Checkout"
               uses: actions/checkout@v7.0.1
@@ -187,7 +192,7 @@ jobs:
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
-                  terraform init
+                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}"
                   terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
 
     terraform-apply:
@@ -199,6 +204,11 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: write
+        env:
+            AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_S3_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_S3_KEY_SECRET }}
+            AWS_ENDPOINT_URL_S3: ${{ vars.TF_STATE_S3_URL }}
+            TF_STATE_S3_NAME: ${{ vars.TF_STATE_S3_NAME || 'tfstate' }}
         steps:
             - name: "Checkout"
               uses: actions/checkout@v7.0.1
@@ -281,7 +291,7 @@ jobs:
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
-                  terraform init
+                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}"
                   # Regenerate the plan in this job instead of uploading the plan
                   # file as an artifact: this repository is public and plan files
                   # contain sensitive variable values.
@@ -289,6 +299,8 @@ jobs:
                   terraform apply -auto-approve tfplan
             - name: "Save Terraform state"
               if: always()
+              env:
+                  TERRAFORM_STATE_TO_GIT: ${{ vars.TERRAFORM_STATE_TO_GIT }}
               run: bash scripts/terraform-state.sh save
 
     ansible:

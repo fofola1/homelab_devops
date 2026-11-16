@@ -78,6 +78,8 @@ Optionally set `PROXMOX_HOST_KEY_FINGERPRINT` manually to pin the Proxmox host k
 
 It also creates the secrets `PROXMOX_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`.
 
+When the optional S3 state backend is configured, it also creates the repository variable `TF_STATE_S3_URL`, the repository variable `TF_STATE_S3_NAME`, the secret `TF_STATE_S3_KEY_ID`, and the secret `TF_STATE_S3_KEY_SECRET`. The S3 values are requested by `./prepare-proxmox.sh` when the optional S3 setup is accepted.
+
 ## VM templates
 
 The first CD run downloads the Debian 12 cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The Docker VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
@@ -88,9 +90,11 @@ The Debian image is not stored in the Git repository. A cloud image is a large b
 
 ## Terraform state
 
-State is stored on the dedicated `terraform-state` branch and is restored at the start of the plan and apply jobs. Do not delete the branch: Terraform would no longer know about the existing template and VM, and the next apply would try to create them again.
+State is stored in the S3 backend configured in `terraform/main.tf` (Cloudflare R2) and is read and written by the Terraform plan and apply jobs during deployment.
 
-The state contains only infrastructure attributes and the cloud-init public key, not the Proxmox API token. Plan files are not uploaded as artifacts because this repository is public and plans contain sensitive values; the apply job regenerates the plan locally.
+The state is mirrored to the dedicated `terraform-state` git branch as well; uploading to that branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable. Do not delete the branch: Terraform would no longer know about the existing template and VM, and the next apply would try to create them again.
+
+The state contains only infrastructure attributes and the cloud-init public key, not the Proxmox API token or any S3 credential. Plan files are not uploaded as artifacts because this repository is public and plans contain sensitive values; the apply job regenerates the plan locally.
 
 ## Local validation
 
