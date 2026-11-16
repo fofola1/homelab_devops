@@ -105,19 +105,6 @@ if [[ "${tailscale_answer}" =~ ^[Yy]$ ]]; then
 	read -r -p "Tailscale name (optional, leave blank for default): " tailscale_hostname
 fi
 
-s3_url=
-s3_name=
-s3_key_id=
-s3_key_secret=
-terraform_state_to_git=true
-read -r -p "Configure S3 storage for the Terraform state? [y/N]: " s3_answer
-if [[ "${s3_answer}" =~ ^[Yy]$ ]]; then
-	s3_url=$(prompt_required "S3 endpoint URL (for example https://<account-id>.r2.cloudflarestorage.com)")
-	s3_name=$(prompt_required "S3 bucket name")
-	s3_key_id=$(prompt_required "S3 key id (Access Key ID of the R2 API token)")
-	s3_key_secret=$(prompt_required "S3 key secret (Secret Access Key of the R2 API token)")
-fi
-
 echo
 echo "The script will connect to ${SSH_TARGET} and prepare Proxmox VE."
 echo "The root SSH password will be requested once, directly by SSH."
@@ -147,11 +134,6 @@ fi
 
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
-TF_STATE_S3_URL="${s3_url:-}" \
-TF_STATE_S3_NAME="${s3_name:-}" \
-TF_STATE_S3_KEY_ID="${s3_key_id:-}" \
-TF_STATE_S3_KEY_SECRET="${s3_key_secret:-}" \
-TERRAFORM_STATE_TO_GIT="${terraform_state_to_git:-true}" \
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
 PVE_API_TOKEN_SECRET="${api_token_secret}" \
 	bash "${report_script}" "${connection}"
