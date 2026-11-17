@@ -28,6 +28,6 @@
 
     - name: Create ZFS pool
       ansible.builtin.command: >-
-        zpool create -f -o "raidlevel={{ zfs_pool_raid_level }}" {{ zfs_pool_name }} {{ zfs_pool_drives | join(' ') }}
+        zpool create -f {{ zfs_pool_name }} {{ zfs_pool_raid_level }} {{ zfs_pool_drives | join(' ') }}
       when: zfs_pool_status.rc != 0
       changed_when: true
