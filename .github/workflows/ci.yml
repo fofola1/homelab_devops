@@ -1,8 +1,11 @@
 name: "CI - Validate"
 
+permissions:
+    contents: read
+
 on:
     push:
-        branches: [main, dev]
+        branches: [main]
     pull_request:
         branches: [main, dev]
 

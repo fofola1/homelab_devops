@@ -65,10 +65,20 @@ echo "Using configuration file: ${config_file}"
 load_config() {
 	local exported_client_id=${TS_OAUTH_CLIENT_ID:-}
 	local exported_client_secret=${TS_OAUTH_SECRET:-}
+	local exported_s3_url=${TF_STATE_S3_URL:-}
+	local exported_s3_name=${TF_STATE_S3_NAME:-}
+	local exported_s3_key_id=${TF_STATE_S3_KEY_ID:-}
+	local exported_s3_key_secret=${TF_STATE_S3_KEY_SECRET:-}
+	local exported_terraform_state_to_git=${TERRAFORM_STATE_TO_GIT:-}
 	# shellcheck disable=SC1090
 	source "${config_file}"
 	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
 	TS_OAUTH_SECRET=${TS_OAUTH_SECRET:-${exported_client_secret}}
+	TF_STATE_S3_URL=${TF_STATE_S3_URL:-${exported_s3_url}}
+	TF_STATE_S3_NAME=${TF_STATE_S3_NAME:-${exported_s3_name}}
+	TF_STATE_S3_KEY_ID=${TF_STATE_S3_KEY_ID:-${exported_s3_key_id}}
+	TF_STATE_S3_KEY_SECRET=${TF_STATE_S3_KEY_SECRET:-${exported_s3_key_secret}}
+	TERRAFORM_STATE_TO_GIT=${TERRAFORM_STATE_TO_GIT:-${exported_terraform_state_to_git}}
 	TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
 	PROXMOX_NODE=${values[PROXMOX_NODE]:-}
 }
@@ -78,6 +88,8 @@ load_config
 echo
 echo "Effective GitHub configuration"
 printf '%-32s %s\n' \
+	ZFS_POOL_DRIVES "${ZFS_POOL_DRIVES:-}" \
+	ZFS_POOL_RAID_LEVEL "${ZFS_POOL_RAID_LEVEL:-}" \
 	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
 	PROXMOX_NODE "${PROXMOX_NODE}" \
 	DOCKER_VM_HOST_IP "${DOCKER_VM_HOST_IP:-}" \
@@ -92,7 +104,12 @@ printf '%-32s %s\n' \
 	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
 	GITHUB_PROXMOX_SSH_KEY_PATH "${GITHUB_PROXMOX_SSH_KEY_PATH:-}" \
 	PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
-	PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}"
+	PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}" \
+	TF_STATE_S3_URL "${TF_STATE_S3_URL:-}" \
+	TF_STATE_S3_NAME "${TF_STATE_S3_NAME:-}" \
+	TERRAFORM_STATE_TO_GIT "${TERRAFORM_STATE_TO_GIT:-true}" \
+	TF_STATE_S3_KEY_ID "${TF_STATE_S3_KEY_ID:+provided}" \
+	TF_STATE_S3_KEY_SECRET "${TF_STATE_S3_KEY_SECRET:+provided}"
 
 read -r -p "Add this configuration to a GitHub repository with gh? [y/N]: " publish_answer
 [[ "${publish_answer}" =~ ^[Yy]$ ]] || exit 0
@@ -194,6 +211,9 @@ fi
 }
 
 variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
+if [[ -n "${ZFS_POOL_DRIVES:-}" ]]; then
+	variables+=(ZFS_POOL_DRIVES ZFS_POOL_RAID_LEVEL)
+fi
 for name in "${variables[@]}"; do
 	gh variable set "${name}" --repo "${repository}" --body "${!name:-${values[${name}]:-}}"
 done
@@ -206,4 +226,12 @@ gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "
 gh secret set PVE_API_TOKEN --repo "${repository}" --app actions \
 	--body "${PVE_API_TOKEN_ID}=${PVE_API_TOKEN_SECRET}"
 gh secret set PROXMOX_KNOWN_HOSTS --repo "${repository}" --app actions --body "${values[PROXMOX_KNOWN_HOSTS]}"
+
+if [[ -n "${TF_STATE_S3_URL:-}" ]]; then
+	gh variable set TF_STATE_S3_URL --repo "${repository}" --body "${TF_STATE_S3_URL}"
+	gh variable set TF_STATE_S3_NAME --repo "${repository}" --body "${TF_STATE_S3_NAME:-}"
+	gh secret set TF_STATE_S3_KEY_ID --repo "${repository}" --app actions --body "${TF_STATE_S3_KEY_ID}"
+	gh secret set TF_STATE_S3_KEY_SECRET --repo "${repository}" --app actions --body "${TF_STATE_S3_KEY_SECRET}"
+	gh variable set TERRAFORM_STATE_TO_GIT --repo "${repository}" --body "${TERRAFORM_STATE_TO_GIT:-true}"
+fi
 echo "GitHub repository configuration updated: ${repository}"

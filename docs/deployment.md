@@ -1,11 +1,27 @@
 # Deployment
 
-The deployment pipeline is defined in `.github/workflows/deploy.yml` and has four stages:
+The deployment pipeline is defined in `.github/workflows/deploy.yml` and has five stages:
 
-1. **Terraform Plan** validates the Terraform configuration against the current state.
-2. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
-3. **Run Ansible** installs Docker Engine on the new VM and prepares the deployment directory.
-4. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+1. **Run Ansible (Host)** prepares the Proxmox host storage before Terraform runs.
+2. **Terraform Plan** validates the Terraform configuration against the current state.
+3. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
+4. **Run Ansible (Docker)** installs Docker Engine on the new VM and prepares the deployment directory.
+5. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+
+## ZFS pool (host storage)
+
+The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).
+
+The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Docker VM disk on the new pool.
+
+The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection to the `ZFS_POOL_DRIVES` and `ZFS_POOL_RAID_LEVEL` repository variables.
+
+Publish the selected whole disks and the RAID level as repository variables before the first deployment:
+
+```bash
+gh variable set ZFS_POOL_DRIVES --repo fofola1/homelab_devops --body "/dev/disk/by-id/scsi-SATA_..."
+gh variable set ZFS_POOL_RAID_LEVEL --repo fofola1/homelab_devops --body "raidz1"
+```
 
 ## First-time setup
 
@@ -22,11 +38,25 @@ If the deployment SSH key was created by an older version of this repository, re
 
 ## Terraform state
 
-State is stored on the dedicated `terraform-state` branch and is restored at the start of the plan and apply jobs. Do not delete the branch: Terraform would no longer know about the existing template and VM and the next apply would try to create them again.
+State is stored in the S3 backend configured in `terraform/main.tf`, which points at a Cloudflare R2 bucket (S3-compatible API). The plan and apply jobs of the CD pipeline use that backend, so the state is read from and written to the bucket directly.
 
-The state contains only infrastructure attributes (VM configuration and the cloud-init public key). It does not contain the Proxmox API token or any other provider credential.
+The state is mirrored to the dedicated `terraform-state` git branch as well; uploading to that branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable. Do not delete the branch: Terraform would no longer know about the existing template and VM and the next apply would try to create them again.
+
+The state contains only infrastructure attributes (VM configuration and the cloud-init public key). It does not contain the Proxmox API token or any S3 credential.
 
 The plan file is intentionally not uploaded as a workflow artifact. This repository is public and Terraform plan files contain sensitive variable values, so the apply job regenerates the plan locally.
+
+### S3 state backend setup
+
+The optional S3 setup is offered by `./prepare-proxmox.sh` and is configured through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
+
+After configuring the backend, verify it with a test run before relying on it:
+
+```bash
+bash scripts/terraform-state.sh test
+```
+
+The test initializes the Terraform backend and creates an empty state in the bucket, the same way the pipeline initializes the backend. If the test fails, the script exits with an error and no state is used. If it succeeds, the state upload to the `terraform-state` git branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable.
 
 ## SSH host keys
 
@@ -46,6 +76,7 @@ The Docker VM gets a static address, so cloud-init does not learn DNS from DHCP.
 
 ## Recovering from a failed apply
 
+- **ZFS pool creation failed:** check that `ZFS_POOL_DRIVES` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
 - **Host key verification failed:** the workflow now refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
 - **`Failed to update apt cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix `DOCKER_VM_IPV4_GATEWAY`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
 - **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL step could not run. Check the SSH key authorization message and re-run `./prepare-proxmox.sh`.

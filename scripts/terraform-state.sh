@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 # Persist Terraform state between GitHub Actions runs.
 #
-# The state is stored on a dedicated git branch instead of being uploaded as a
-# workflow artifact. The state only contains infrastructure attributes (VM
-# configuration and the cloud-init public key), never provider credentials.
+# The state is stored in the S3 backend (Cloudflare R2) configured in
+# terraform/main.tf and restored at the start of the plan and apply jobs.
+# The state is mirrored to a dedicated git branch as well; uploading to that
+# branch can be disabled with TERRAFORM_STATE_TO_GIT.
 #
-# Usage: terraform-state.sh {restore|save}
+# The state only contains infrastructure attributes (VM configuration and the
+# cloud-init public key), never provider credentials.
+#
+# Usage: terraform-state.sh {restore|save|test}
 set -euo pipefail
 
 action=${1:-}
 state_branch=${TERRAFORM_STATE_BRANCH:-terraform-state}
 state_file=${TERRAFORM_STATE_FILE:-terraform/terraform.tfstate}
 state_worktree=
+state_to_git=${TERRAFORM_STATE_TO_GIT:-true}
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+terraform_directory="${script_directory}/../terraform"
+script_name=$(basename -- "$0")
+readonly script_name
+
+die() {
+	echo "${script_name}: $*" >&2
+	exit 1
+}
 
 cleanup() {
 	if [[ -n "${state_worktree}" ]]; then
@@ -42,6 +56,15 @@ restore() {
 }
 
 save() {
+	if [[ "${state_to_git}" != true ]]; then
+		echo "Skipping Terraform state upload to the '${state_branch}' branch."
+		return 0
+	fi
+
+	if ! terraform -chdir="${terraform_directory}" state pull > "${state_file}"; then
+		die "Unable to read the Terraform state from the backend."
+	fi
+
 	if [[ ! -s "${state_file}" ]]; then
 		echo "No ${state_file} to persist."
 		return 0
@@ -73,6 +96,14 @@ save() {
 	echo "Saved ${state_file} to the '${state_branch}' branch."
 }
 
+test_backend() {
+	terraform_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/../terraform
+	[[ -d "${terraform_directory}" ]] || die "Terraform directory not found: ${terraform_directory}"
+	terraform -chdir="${terraform_directory}" init -backend-config="bucket=${TF_STATE_S3_NAME:-tfstate}"
+	terraform -chdir="${terraform_directory}" state list
+	echo "Terraform state backend test run finished."
+}
+
 case "${action}" in
 	restore)
 		restore
@@ -80,8 +111,11 @@ case "${action}" in
 	save)
 		save
 		;;
+	test)
+		test_backend
+		;;
 	*)
-		echo "Usage: $0 {restore|save}" >&2
+		echo "Usage: $0 {restore|save|test}" >&2
 		exit 2
 		;;
 esac

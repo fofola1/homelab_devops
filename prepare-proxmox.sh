@@ -132,6 +132,33 @@ if [[ ! -f "${config_file}" && -f "${config_file}.example" ]]; then
 	echo "Created ${config_file}; fill it in when prompted." >&2
 fi
 
+zfs_pool_drives=
+read -r -p "Set up a dedicated drive for application data (photos, media, ...)? [y/N]: " zfs_data_answer
+if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
+	mapfile -t zfs_disk_list < <(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+		"lsblk -d -o NAME,SIZE 2>/dev/null | tail -n +2")
+	if [[ ${#zfs_disk_list[@]} -gt 0 ]]; then
+		echo "Available whole disks:"
+		zfs_index=1
+		for zfs_drive in "${zfs_disk_list[@]}"; do
+			printf '  %d) %s\n' "${zfs_index}" "${zfs_drive}"
+			zfs_index=$((zfs_index + 1))
+		done
+		read -r -p "Select disk indices for the ZFS pool (comma-separated): " zfs_selection
+		[[ "${zfs_selection}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "Selection must be comma-separated numbers, for example 1,2,3."
+		IFS=',' read -r -a zfs_chosen <<< "${zfs_selection}"
+		for zfs_idx in "${zfs_chosen[@]}"; do
+			zfs_drive_line="${zfs_disk_list[$((10#${zfs_idx} - 1))]}"
+			read -r -a zfs_drive_parts <<< "${zfs_drive_line}"
+			zfs_pool_drives="${zfs_pool_drives:+${zfs_pool_drives},}/dev/${zfs_drive_parts[0]}"
+		done
+	fi
+	if [[ -n "${zfs_pool_drives}" ]]; then
+		export ZFS_POOL_DRIVES="${zfs_pool_drives}"
+		export ZFS_POOL_RAID_LEVEL="raidz1"
+	fi
+fi
+
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
