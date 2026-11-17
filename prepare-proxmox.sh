@@ -135,15 +135,15 @@ fi
 zfs_pool_drives=
 read -r -p "Set up a dedicated drive for application data (photos, media, ...)? [y/N]: " zfs_data_answer
 if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
-	zfs_disk_list=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+	mapfile -t zfs_disk_list < <(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
 		"lsblk -d -o NAME,SIZE 2>/dev/null | tail -n +2")
-	if [[ -n "${zfs_disk_list}" ]]; then
+	if [[ ${#zfs_disk_list[@]} -gt 0 ]]; then
 		echo "Available whole disks:"
 		zfs_index=1
-		while IFS= read -r zfs_drive; do
+		for zfs_drive in "${zfs_disk_list[@]}"; do
 			printf '  %d) %s\n' "${zfs_index}" "${zfs_drive}"
 			zfs_index=$((zfs_index + 1))
-		done <<< "${zfs_disk_list}"
+		done
 		read -r -p "Select disk indices for the ZFS pool (comma-separated): " zfs_selection
 		[[ "${zfs_selection}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "Selection must be comma-separated numbers, for example 1,2,3."
 		IFS=',' read -r -a zfs_chosen <<< "${zfs_selection}"
