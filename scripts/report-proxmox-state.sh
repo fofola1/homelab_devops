@@ -88,6 +88,8 @@ load_config
 echo
 echo "Effective GitHub configuration"
 printf '%-32s %s\n' \
+	ZFS_POOL_DRIVES "${ZFS_POOL_DRIVES:-}" \
+	ZFS_POOL_RAID_LEVEL "${ZFS_POOL_RAID_LEVEL:-}" \
 	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
 	PROXMOX_NODE "${PROXMOX_NODE}" \
 	DOCKER_VM_HOST_IP "${DOCKER_VM_HOST_IP:-}" \
@@ -209,6 +211,9 @@ fi
 }
 
 variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
+if [[ -n "${ZFS_POOL_DRIVES:-}" ]]; then
+	variables+=(ZFS_POOL_DRIVES ZFS_POOL_RAID_LEVEL)
+fi
 for name in "${variables[@]}"; do
 	gh variable set "${name}" --repo "${repository}" --body "${!name:-${values[${name}]:-}}"
 done

@@ -27,13 +27,7 @@ The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool 
 
 The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Docker VM disk on the new pool.
 
-Run the interactive selector to pick the whole disks and publish the variables:
-
-```bash
-./scripts/create-raid-pool.sh
-```
-
-The script lists the whole disks on the machine, asks for the indices to include, and writes the selection to `ZFS_POOL_DRIVES` plus `ZFS_POOL_RAID_LEVEL=raidz1`.
+The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and publishes the selection to the `ZFS_POOL_DRIVES` and `ZFS_POOL_RAID_LEVEL` repository variables.
 
 Publish the selected drives and the RAID level as repository variables before the first deployment:
 
