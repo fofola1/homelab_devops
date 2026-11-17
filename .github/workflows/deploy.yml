@@ -192,7 +192,7 @@ jobs:
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
-                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}"
+                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
                   terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
 
     terraform-apply:
@@ -291,7 +291,7 @@ jobs:
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
-                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}"
+                  terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
                   # Regenerate the plan in this job instead of uploading the plan
                   # file as an artifact: this repository is public and plan files
                   # contain sensitive variable values.
