@@ -64,7 +64,7 @@ resource "proxmox_virtual_environment_vm" "template" {
   }
 }
 
-resource "proxmox_virtual_environment_vm" "docker" {
+resource "proxmox_virtual_environment_vm" "cloud_storage" {
   name      = var.vm_name
   node_name = var.proxmox_node
   vm_id     = var.vm_id

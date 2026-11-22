@@ -5,8 +5,8 @@ The deployment pipeline is defined in `.github/workflows/deploy.yml` and has fiv
 1. **Run Ansible (Host)** prepares the Proxmox host storage before Terraform runs.
 2. **Terraform Plan** validates the Terraform configuration against the current state.
 3. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
-4. **Run Ansible (Docker)** installs Docker Engine on the new VM and prepares the deployment directory.
-5. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+4. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
+5. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
 
 ## ZFS pool (host storage)
 
@@ -72,12 +72,12 @@ The deployment then fails when none of the discovered keys match the pinned fing
 
 ## VM networking
 
-The Docker VM gets a static address, so cloud-init does not learn DNS from DHCP. Terraform therefore configures `DOCKER_VM_IPV4_GATEWAY` as the VM's DNS server. The Ansible playbook also writes `/etc/resolv.conf` with the gateway plus `1.1.1.1`, limits APT to IPv4 with short timeouts, and updates the cache with a bounded command. A broken DNS or egress path now fails in minutes with the actual APT output instead of hanging.
+The cloud storage VM gets a static address, so cloud-init does not learn DNS from DHCP. Terraform therefore configures `DOCKER_VM_IPV4_GATEWAY` as the VM's DNS server. The Ansible playbook also writes `/etc/resolv.conf` with the gateway plus `1.1.1.1`, bounds the Alpine package manager timeouts, and updates the cache with a bounded command. A broken DNS or egress path now fails in minutes with the actual package output instead of hanging.
 
 ## Recovering from a failed apply
 
 - **ZFS pool creation failed:** check that `ZFS_POOL_DRIVES` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
 - **Host key verification failed:** the workflow now refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
-- **`Failed to update apt cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix `DOCKER_VM_IPV4_GATEWAY`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
+- **`Failed to update the package cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix `DOCKER_VM_IPV4_GATEWAY`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
 - **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL step could not run. Check the SSH key authorization message and re-run `./prepare-proxmox.sh`.
 - **VM already exists:** restore the `terraform-state` branch or import the existing VM manually before applying again.

@@ -33,7 +33,7 @@ variable "vm_id" {
 
 variable "vm_name" {
   type    = string
-  default = "docker-host"
+  default = "cloud-storage"
 }
 
 variable "vm_cpu_cores" {
@@ -78,7 +78,7 @@ variable "vm_ipv4_gateway" {
 
 variable "docker_user" {
   type    = string
-  default = "deploy"
+  default = "alpine"
 }
 
 variable "ssh_public_key" {

@@ -174,6 +174,34 @@ jobs:
                           --form "filename=@${image_path}" \
                           "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
                   fi
+
+            - name: "Upload Alpine image to Proxmox"
+              env:
+                  PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
+                  PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
+                  PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
+                  IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
+                  IMAGE_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud/alpine-3.24.4-x86_64-cloudinit-r0.qcow2
+                  IMAGE_FILE_NAME: alpine-324.qcow2
+                  IMAGE_SHA512: deaf133ef03ea58fc38abcfe11ec8847d97a7e4b30b9ec5d9df62b945eead7a59638464bd4a421caca6498fe8e4ee5d0c8e21d828c34ec529aecc88ab6f01364
+              run: |
+                  set -euo pipefail
+                  image_path="${RUNNER_TEMP}/${IMAGE_FILE_NAME}"
+                  curl --fail --location --retry 5 --output "${image_path}" "${IMAGE_URL}"
+                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
+                  auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
+                  content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
+                  content_response=$(mktemp)
+                  trap 'rm -f "${content_response}"' EXIT
+                  curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
+                      "${content_url}" > "${content_response}"
+                  if ! jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" \
+                      '.data[] | select(.volid == $volume)' "${content_response}" >/dev/null; then
+                      curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
+                          --form "content=import" \
+                          --form "filename=@${image_path}" \
+                          "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
+                  fi
             - name: "Terraform Init & Plan"
               env:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
@@ -193,7 +221,7 @@ jobs:
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
-                  terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
+                  terraform plan -var-file=templates/alpine-324.tfvars -out=tfplan
 
     terraform-apply:
         name: "3. Terraform Apply"
@@ -295,7 +323,7 @@ jobs:
                   # Regenerate the plan in this job instead of uploading the plan
                   # file as an artifact: this repository is public and plan files
                   # contain sensitive variable values.
-                  terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
+                  terraform plan -var-file=templates/alpine-324.tfvars -out=tfplan
                   terraform apply -auto-approve tfplan
             - name: "Save Terraform state"
               if: always()
@@ -379,14 +407,14 @@ jobs:
                       exit 1
                   fi
                   python -m pip install "ansible==${ANSIBLE_VERSION}"
-                  ansible-inventory -i ansible/inventory/proxmox.yml --graph docker_hosts
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml --list-hosts
+                  ansible-inventory -i ansible/inventory/proxmox.yml --graph cloud_storage_hosts
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml --list-hosts
                   ansible_common_args=(--ssh-common-args="-o ProxyJump=root@${TS_PROXMOX_HOSTNAME}")
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
                       -a 'timeout=300' "${ansible_common_args[@]}"
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml -m command \
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m command \
                       -a 'cloud-init status --wait' "${ansible_common_args[@]}"
-                  ansible-playbook -i ansible/inventory/proxmox.yml --limit docker_hosts \
+                  ansible-playbook -i ansible/inventory/proxmox.yml --limit cloud_storage_hosts \
                       "${ansible_common_args[@]}" ansible/site.yml
 
     docker:

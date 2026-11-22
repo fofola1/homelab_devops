@@ -1,6 +1,6 @@
 # Homelab DevOps Stack
 
-Terraform provisions a Debian 12 cloud template and a Docker VM on Proxmox, Ansible installs Docker Engine on the VM, and GitHub Actions deploys the compose stack in `docker/`. The sample stack currently contains a single nginx service exposed on port `8080`; add your own services to `docker/compose.yml`.
+Terraform provisions an Alpine Linux cloud template and a cloud storage VM on Proxmox, Ansible installs Docker Engine on the VM, and GitHub Actions deploys the compose stack in `docker/`. The stack currently runs Immich for the photo library and FileBrowser Quantum as the file manager; add your own services to `docker/compose.yml`.
 
 ## Repository layout
 
@@ -76,11 +76,22 @@ When the optional S3 state backend is configured, it also creates the repository
 
 ## VM templates
 
-The first CD run downloads the Debian 12 cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The Docker VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
+The first CD run downloads the Alpine Linux cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The cloud storage VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
 
-Template profiles live in `terraform/templates/` and are selected with `-var-file` in the Terraform plan and apply jobs. To use another image, add a `.tfvars` file with the `template` object and update both `terraform plan` invocations in `.github/workflows/deploy.yml`. The `Upload Debian image to Proxmox` step in the same workflow also contains a copy of the image URL, file name, and checksum; keep those values in sync with the profile. VM address, ID, storage, gateway, and deployment settings remain in `report-proxmox-state.conf`.
+Template profiles live in `terraform/templates/` and are selected with `-var-file` in the Terraform plan and apply jobs. To use another image, add a `.tfvars` file with the `template` object and update both `terraform plan` invocations in `.github/workflows/deploy.yml`. The `Upload Alpine image to Proxmox` step in the same workflow also contains a copy of the image URL, file name, and checksum; keep those values in sync with the profile. VM address, ID, storage, gateway, and deployment settings remain in `report-proxmox-state.conf`.
 
-The Debian image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct Debian mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
+The Alpine image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct Alpine mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
+
+## Cloud storage VM
+
+The cloud storage VM is named `cloud-storage` and runs on the Alpine Linux template. It gets the static address from the repository variables and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+
+- `/tank/immich` for the Immich library.
+- `/tank/filebrowser` for the FileBrowser Quantum file manager.
+
+The compose stack in `docker/compose.yml` starts Immich (port `2283`) and FileBrowser Quantum (port `8080`), both reading from those mounts.
+
+When other VMs access the same pool through virtiofs later, keep an eye on file ownership: the same pool mounted from multiple VMs can end up with conflicting UIDs and cause permission errors.
 
 ## Terraform state
 
@@ -104,7 +115,7 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 ## Troubleshooting
 
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
-- **`Failed to update apt cache`:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify `DOCKER_VM_IPV4_GATEWAY`.
+- **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify `DOCKER_VM_IPV4_GATEWAY`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.
 
 More recovery notes are in [`docs/deployment.md`](docs/deployment.md).
