@@ -1,6 +1,6 @@
 # Homelab DevOps Stack
 
-Terraform provisions an Alpine Linux cloud template and a cloud storage VM on Proxmox, Ansible installs Docker Engine on the VM, and GitHub Actions deploys the compose stack in `docker/`. The stack currently runs Immich for the photo library and FileBrowser Quantum as the file manager; add your own services to `docker/compose.yml`.
+Terraform provisions a cloud image template and a cloud storage VM on Proxmox, Ansible installs Docker Engine on the VM, and GitHub Actions deploys the compose stack in `docker/`. The stack currently runs Immich for the photo library and FileBrowser Quantum as the file manager; add your own services to `docker/compose.yml`.
 
 ## Repository layout
 
@@ -61,6 +61,7 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | `DOCKER_VM_ID` | VM ID for the Docker VM. |
 | `DOCKER_VM_DATASTORE` | Storage for the VM disk and cloud-init drive. |
 | `DOCKER_VM_IMAGE_DATASTORE` | Storage that accepts the `import` content type for cloud images. |
+| `DOCKER_VM_TEMPLATE` | Template profile used by Terraform (profile file name without `.tfvars`); default `alpine-324`. |
 | `DOCKER_VM_IPV4_CIDR` | Prefix length for the VM address. |
 | `DOCKER_VM_IPV4_GATEWAY` | LAN gateway; also used as the VM's DNS server. |
 | `DOCKER_VM_DEPLOY_PATH` | Directory on the VM for the compose stack. |
@@ -76,15 +77,24 @@ When the optional S3 state backend is configured, it also creates the repository
 
 ## VM templates
 
-The first CD run downloads the Alpine Linux cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The cloud storage VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
+The first CD run downloads the selected cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The cloud storage VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
 
-Template profiles live in `terraform/templates/` and are selected with `-var-file` in the Terraform plan and apply jobs. To use another image, add a `.tfvars` file with the `template` object and update both `terraform plan` invocations in `.github/workflows/deploy.yml`. The `Upload Alpine image to Proxmox` step in the same workflow also contains a copy of the image URL, file name, and checksum; keep those values in sync with the profile. VM address, ID, storage, gateway, and deployment settings remain in `report-proxmox-state.conf`.
+Template profiles live in `terraform/templates/` and each `.tfvars` file holds one `template` object with the image URL, file name, checksum, and Proxmox VM ID for that image. The profile used by the deployment is selected with the `DOCKER_VM_TEMPLATE` repository variable, which holds the profile file name without the `.tfvars` suffix (for example `alpine-324`).
 
-The Alpine image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct Alpine mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
+To add or switch a template:
+
+1. Add `terraform/templates/<name>.tfvars` with the `template` object for the new image.
+2. Set the `DOCKER_VM_TEMPLATE` repository variable to `<name>`.
+
+The CD workflow resolves the selected profile, uploads its image, and plans and applies the VM from it, so adding or changing a template only ever touches the new profile file and the repository variable. VM address, ID, storage, gateway, and deployment settings remain in `report-proxmox-state.conf`.
+
+Changing the `DOCKER_VM_TEMPLATE` value requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
+
+The Alpine image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the Alpine Linux template. It gets the static address from the repository variables and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via the `DOCKER_VM_TEMPLATE` repository variable. It gets the static address from the repository variables and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
