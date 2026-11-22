@@ -1,8 +1,8 @@
 all:
   children:
-    docker_hosts:
+    cloud_storage_hosts:
       hosts:
-        docker_vm:
+        cloud_storage_vm:
           ansible_host: "{{ lookup('env', 'DOCKER_VM_HOST_IP') }}"
           ansible_user: "{{ lookup('env', 'DOCKER_VM_DEPLOY_USER') }}"
     proxmox_hosts:

@@ -1,6 +1,63 @@
 services:
-  web:
-    image: nginx:1.29-alpine
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich
+    restart: unless-stopped
+    ports:
+      - "2283:2283"
+    environment:
+      - DB_HOSTNAME=immich-database
+      - DB_USERNAME=immich
+      - DB_PASSWORD=immich
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=immich-redis
+      - UPLOAD_LOCATION=/tank/immich
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+    volumes:
+      - /tank/immich:/usr/src/app/upload
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - redis
+      - database
+
+  redis:
+    image: docker.io/valkey/valkey:9
+    container_name: immich-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  database:
+    image: ghcr.io/immich-app/postgres:18-vectorchord0.5.3-pgvector0.8.1
+    container_name: immich-database
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=immich
+      - POSTGRES_PASSWORD=immich
+      - POSTGRES_DB=immich
+    volumes:
+      - immich-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "immich"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  filebrowser:
+    image: ghcr.io/gtsteffaniak/filebrowser:stable
+    container_name: filebrowser
     restart: unless-stopped
     ports:
       - "8080:80"
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /tank/filebrowser:/folder
+      - /tank/filebrowser:/home/filebrowser/data
+
+volumes:
+  immich-postgres:
