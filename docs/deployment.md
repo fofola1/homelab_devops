@@ -8,6 +8,8 @@ The deployment pipeline is defined in `.github/workflows/deploy.yml` and has fiv
 4. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
 5. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
 
+The Terraform stages resolve the template profile selected by the `DOCKER_VM_TEMPLATE` repository variable from `terraform/templates/` before planning and uploading the cloud image; the image URL, file name, checksum, and checksum algorithm therefore live only in the profile file.
+
 ## ZFS pool (host storage)
 
 The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).

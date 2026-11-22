@@ -147,48 +147,45 @@ jobs:
                   public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
                   test -n "${public_key}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
-            - name: "Upload Debian image to Proxmox"
+            - name: "Resolve template profile"
+              id: template
               env:
-                  PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
-                  PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
-                  PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
-                  IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
-                  IMAGE_URL: https://cloud.debian.org/images/cloud/bookworm/20261026-2643/debian-12-genericcloud-amd64-20261026-2643.qcow2
-                  IMAGE_FILE_NAME: debian-12-genericcloud-amd64.qcow2
-                  IMAGE_SHA512: 0464b5d4ae3aa4f658468d88da83af7857b71548b30d46dcb6282770955a747fb95a983476db90d25afd0653af607224c7ebd05122ab71faa106fd712aaad652
+                  DOCKER_VM_TEMPLATE: ${{ vars.DOCKER_VM_TEMPLATE }}
               run: |
                   set -euo pipefail
-                  image_path="${RUNNER_TEMP}/${IMAGE_FILE_NAME}"
-                  curl --fail --location --retry 5 --output "${image_path}" "${IMAGE_URL}"
-                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
-                  auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
-                  content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
-                  content_response=$(mktemp)
-                  trap 'rm -f "${content_response}"' EXIT
-                  curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
-                      "${content_url}" > "${content_response}"
-                  if ! jq -e --arg volume "${IMAGE_DATASTORE}:import/${IMAGE_FILE_NAME}" \
-                      '.data[] | select(.volid == $volume)' "${content_response}" >/dev/null; then
-                      curl --insecure --fail-with-body --silent --show-error --header "${auth_header}" \
-                          --form "content=import" \
-                          --form "filename=@${image_path}" \
-                          "${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/upload"
-                  fi
+                  template_name="${DOCKER_VM_TEMPLATE:-alpine-324}"
+                  template_file="terraform/templates/${template_name}.tfvars"
+                  test -f "${template_file}"
+                  image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_file_name=$(sed -n 's|^[[:space:]]*image_file_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum=$(sed -n 's|^[[:space:]]*image_checksum[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum_algorithm=$(sed -n 's|^[[:space:]]*image_checksum_algorithm[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  test -n "${image_url}"
+                  test -n "${image_file_name}"
+                  test -n "${image_checksum}"
+                  test -n "${image_checksum_algorithm}"
+                  echo "name=${template_name}" >> "${GITHUB_OUTPUT}"
+                  echo "tfvars=templates/${template_name}.tfvars" >> "${GITHUB_OUTPUT}"
+                  echo "image_url=${image_url}" >> "${GITHUB_OUTPUT}"
+                  echo "image_file_name=${image_file_name}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum=${image_checksum}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum_algorithm=${image_checksum_algorithm}" >> "${GITHUB_OUTPUT}"
 
-            - name: "Upload Alpine image to Proxmox"
+            - name: "Upload cloud image to Proxmox"
               env:
                   PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
                   PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
                   PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
                   IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
-                  IMAGE_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud/alpine-3.24.4-x86_64-cloudinit-r0.qcow2
-                  IMAGE_FILE_NAME: alpine-324.qcow2
-                  IMAGE_SHA512: deaf133ef03ea58fc38abcfe11ec8847d97a7e4b30b9ec5d9df62b945eead7a59638464bd4a421caca6498fe8e4ee5d0c8e21d828c34ec529aecc88ab6f01364
+                  IMAGE_URL: ${{ steps.template.outputs.image_url }}
+                  IMAGE_FILE_NAME: ${{ steps.template.outputs.image_file_name }}
+                  IMAGE_SHA512: ${{ steps.template.outputs.image_checksum }}
+                  IMAGE_CHECKSUM_ALGORITHM: ${{ steps.template.outputs.image_checksum_algorithm }}
               run: |
                   set -euo pipefail
                   image_path="${RUNNER_TEMP}/${IMAGE_FILE_NAME}"
                   curl --fail --location --retry 5 --output "${image_path}" "${IMAGE_URL}"
-                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
+                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | "${IMAGE_CHECKSUM_ALGORITHM}sum" --check --status
                   auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
                   content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
                   content_response=$(mktemp)
@@ -221,7 +218,7 @@ jobs:
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
-                  terraform plan -var-file=templates/alpine-324.tfvars -out=tfplan
+                  terraform plan -var-file="${{ steps.template.outputs.tfvars }}" -out=tfplan
 
     terraform-apply:
         name: "3. Terraform Apply"
@@ -301,6 +298,29 @@ jobs:
                   # shellcheck disable=SC2029
                   ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
                       "pveum acl modify /sdn/zones/localnetwork/vmbr0 -user '${api_user}' -role homelab-terraform"
+            - name: "Resolve template profile"
+              id: template
+              env:
+                  DOCKER_VM_TEMPLATE: ${{ vars.DOCKER_VM_TEMPLATE }}
+              run: |
+                  set -euo pipefail
+                  template_name="${DOCKER_VM_TEMPLATE:-alpine-324}"
+                  template_file="terraform/templates/${template_name}.tfvars"
+                  test -f "${template_file}"
+                  image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_file_name=$(sed -n 's|^[[:space:]]*image_file_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum=$(sed -n 's|^[[:space:]]*image_checksum[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum_algorithm=$(sed -n 's|^[[:space:]]*image_checksum_algorithm[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  test -n "${image_url}"
+                  test -n "${image_file_name}"
+                  test -n "${image_checksum}"
+                  test -n "${image_checksum_algorithm}"
+                  echo "name=${template_name}" >> "${GITHUB_OUTPUT}"
+                  echo "tfvars=templates/${template_name}.tfvars" >> "${GITHUB_OUTPUT}"
+                  echo "image_url=${image_url}" >> "${GITHUB_OUTPUT}"
+                  echo "image_file_name=${image_file_name}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum=${image_checksum}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum_algorithm=${image_checksum_algorithm}" >> "${GITHUB_OUTPUT}"
             - name: "Terraform Init & Apply"
               env:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
@@ -323,7 +343,7 @@ jobs:
                   # Regenerate the plan in this job instead of uploading the plan
                   # file as an artifact: this repository is public and plan files
                   # contain sensitive variable values.
-                  terraform plan -var-file=templates/alpine-324.tfvars -out=tfplan
+                  terraform plan -var-file="${{ steps.template.outputs.tfvars }}" -out=tfplan
                   terraform apply -auto-approve tfplan
             - name: "Save Terraform state"
               if: always()
