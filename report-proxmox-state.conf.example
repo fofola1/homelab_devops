@@ -3,23 +3,23 @@
 # Proxmox hostname, Proxmox node, host keys, and API token values are discovered
 # by the setup/report scripts and should not be copied into this file.
 
-# Required: IPv4 address reserved for the Docker VM on the existing LAN.
-DOCKER_VM_HOST_IP=
-# Required: unused numeric ID to assign to the new Docker VM (for example, 120).
-DOCKER_VM_ID=
+# Required: IPv4 address reserved for the Cloud Storage VM on the existing LAN.
+CLOUD_STORAGE_HOST_IP=
+# Required: unused numeric ID to assign to the new Cloud Storage VM (for example, 120).
+CLOUD_STORAGE_ID=
 # Required: Proxmox storage name for the VM disk and cloud-init drive (for example, local-lvm).
-DOCKER_VM_DATASTORE=
+CLOUD_STORAGE_DATASTORE=
 # Required: Proxmox storage that supports the import content type for downloaded images (for example, local).
-DOCKER_VM_IMAGE_DATASTORE=
-# Optional: prefix length for DOCKER_VM_HOST_IP; 24 means a 255.255.255.0 LAN.
-DOCKER_VM_IPV4_CIDR=24
-# Required: LAN gateway reachable by the Docker VM (for example, 192.168.1.1).
+CLOUD_STORAGE_IMAGE_DATASTORE=
+# Optional: prefix length for CLOUD_STORAGE_HOST_IP; 24 means a 255.255.255.0 LAN.
+CLOUD_STORAGE_IPV4_CIDR=24
+# Required: LAN gateway reachable by the Cloud Storage VM (for example, 192.168.1.1).
 # Also used as the VM's first DNS server.
-DOCKER_VM_IPV4_GATEWAY=
-# Required: directory on the Docker VM where the contents of docker/ will be deployed.
-DOCKER_VM_DEPLOY_PATH=
+CLOUD_STORAGE_IPV4_GATEWAY=
+# Required: directory on the Cloud Storage VM where the contents of docker/ will be deployed.
+CLOUD_STORAGE_DEPLOY_PATH=
 # Required: Linux user created by cloud-init and used by Ansible and SSH (for example, deploy).
-DOCKER_VM_DEPLOY_USER=
+CLOUD_STORAGE_DEPLOY_USER=
 
 # Required by every GitHub Actions deployment job to join the Tailscale network.
 # Create an OAuth client in Tailscale with permission to authenticate the tagged runner.

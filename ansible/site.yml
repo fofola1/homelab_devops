@@ -38,8 +38,8 @@
   gather_facts: true
 
   vars:
-    docker_vm_deploy_path: "{{ lookup('env', 'DOCKER_VM_DEPLOY_PATH') }}"
-    docker_vm_ipv4_gateway: "{{ lookup('env', 'DOCKER_VM_IPV4_GATEWAY') }}"
+    cloud_storage_deploy_path: "{{ lookup('env', 'CLOUD_STORAGE_DEPLOY_PATH') }}"
+    cloud_storage_ipv4_gateway: "{{ lookup('env', 'CLOUD_STORAGE_IPV4_GATEWAY') }}"
 
   pre_tasks:
     - name: Wait for cloud-init to finish
@@ -49,9 +49,9 @@
     - name: Verify the deployment settings are configured
       ansible.builtin.assert:
         that:
-          - docker_vm_deploy_path | length > 0
-          - docker_vm_ipv4_gateway | length > 0
-        fail_msg: "DOCKER_VM_DEPLOY_PATH and DOCKER_VM_IPV4_GATEWAY must be set."
+          - cloud_storage_deploy_path | length > 0
+          - cloud_storage_ipv4_gateway | length > 0
+        fail_msg: "CLOUD_STORAGE_DEPLOY_PATH and CLOUD_STORAGE_IPV4_GATEWAY must be set."
 
   tasks:
     - name: Inspect the VM network configuration
@@ -74,7 +74,7 @@
         dest: /etc/resolv.conf
         mode: "0644"
         content: |
-          nameserver {{ docker_vm_ipv4_gateway }}
+          nameserver {{ cloud_storage_ipv4_gateway }}
           nameserver 1.1.1.1
 
     - name: Verify DNS resolution
@@ -126,7 +126,7 @@
 
     - name: Create the Docker deployment directory
       ansible.builtin.file:
-        path: "{{ docker_vm_deploy_path }}"
+        path: "{{ cloud_storage_deploy_path }}"
         state: directory
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
