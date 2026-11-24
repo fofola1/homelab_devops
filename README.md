@@ -75,7 +75,6 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | Variable | Description |
 | --- | --- |
 | `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale (fetched automatically during setup). |
-| `CLOUD_STORAGE_TEMPLATE` | Template profile used by Terraform (profile file name without `.tfvars`); default `alpine-324`. |
 | `PROXMOX_HOST_KEY_FINGERPRINT` | Pinned Proxmox host key fingerprint (fetched automatically during setup). |
 | `TF_STATE_S3_URL` | S3 endpoint URL when the optional S3 state backend is used. |
 | `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
@@ -89,7 +88,7 @@ When the optional S3 state backend is configured, it also creates the repository
 
 The first CD run downloads the selected cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The cloud storage VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
 
-Template profiles live in `terraform/templates/` and each `.tfvars` file holds one `template` object with the image URL, file name, checksum, and Proxmox VM ID for that image. The profile used by the deployment is selected with the `CLOUD_STORAGE_TEMPLATE` repository variable, which holds the profile file name without the `.tfvars` suffix (for example `alpine-324`).
+Template profiles live in `terraform/templates/` and each `.tfvars` file holds one `template` object with the image URL, file name, checksum, and Proxmox VM ID for that image. The profile used by the deployment is selected with the `cloud_storage.template` value in `config/infra.yaml` (default `alpine-324`), which holds the profile file name without the `.tfvars` suffix (for example `alpine-324`).
 
 To add or switch a template:
 
