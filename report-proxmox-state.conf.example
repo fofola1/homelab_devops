@@ -1,12 +1,9 @@
 # Copy this file to report-proxmox-state.conf and fill it in.
 # The real file is gitignored because it can contain OAuth credentials.
 # Values that describe the Proxmox setup itself live in config/infra.yaml.
+# TS_PROXMOX_HOSTNAME and PROXMOX_HOST_KEY_FINGERPRINT are fetched automatically
+# from the Proxmox host during ./prepare-proxmox.sh and do not need to be set here.
 
-# Required: Proxmox host address over Tailscale used by the GitHub Actions runners.
-TS_PROXMOX_HOSTNAME=
-# Optional: set to pin the Proxmox host key fingerprint (for example the output
-# of "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub").
-PROXMOX_HOST_KEY_FINGERPRINT=
 # Required by every GitHub Actions deployment job to join the Tailscale network.
 # Create an OAuth client in Tailscale with permission to authenticate the tagged runner.
 # Set these here or export them in your shell (exported values are used when empty).

@@ -182,6 +182,13 @@ if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
 	fi
 fi
 
+proxmox_host_key_fingerprint=
+proxmox_host_key_fingerprint=$(ssh-keyscan -H "${SSH_HOST}" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | awk '{print $2}' | head -n 1 || true)
+if [[ -n "${proxmox_host_key_fingerprint}" ]]; then
+	export PROXMOX_HOST_KEY_FINGERPRINT="${proxmox_host_key_fingerprint}"
+	echo "Discovered Proxmox host key fingerprint: ${proxmox_host_key_fingerprint}" >&2
+fi
+
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \

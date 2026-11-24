@@ -74,9 +74,9 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 
 | Variable | Description |
 | --- | --- |
-| `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale. |
+| `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale (fetched automatically during setup). |
 | `CLOUD_STORAGE_TEMPLATE` | Template profile used by Terraform (profile file name without `.tfvars`); default `alpine-324`. |
-| `PROXMOX_HOST_KEY_FINGERPRINT` | Optional pinned Proxmox host key fingerprint. |
+| `PROXMOX_HOST_KEY_FINGERPRINT` | Pinned Proxmox host key fingerprint (fetched automatically during setup). |
 | `TF_STATE_S3_URL` | S3 endpoint URL when the optional S3 state backend is used. |
 | `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
 | `TERRAFORM_STATE_TO_GIT` | Whether to mirror the Terraform state to the `terraform-state` branch; default `true`. |
