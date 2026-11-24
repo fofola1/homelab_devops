@@ -1,26 +1,12 @@
 # Copy this file to report-proxmox-state.conf and fill it in.
 # The real file is gitignored because it can contain OAuth credentials.
-# Proxmox hostname, Proxmox node, host keys, and API token values are discovered
-# by the setup/report scripts and should not be copied into this file.
+# Values that describe the Proxmox setup itself live in config/infra.yaml.
 
-# Required: IPv4 address reserved for the Cloud Storage VM on the existing LAN.
-CLOUD_STORAGE_HOST_IP=
-# Required: unused numeric ID to assign to the new Cloud Storage VM (for example, 120).
-CLOUD_STORAGE_ID=
-# Required: Proxmox storage name for the VM disk and cloud-init drive (for example, local-lvm).
-CLOUD_STORAGE_DATASTORE=
-# Required: Proxmox storage that supports the import content type for downloaded images (for example, local).
-CLOUD_STORAGE_IMAGE_DATASTORE=
-# Optional: prefix length for CLOUD_STORAGE_HOST_IP; 24 means a 255.255.255.0 LAN.
-CLOUD_STORAGE_IPV4_CIDR=24
-# Required: LAN gateway reachable by the Cloud Storage VM (for example, 192.168.1.1).
-# Also used as the VM's first DNS server.
-CLOUD_STORAGE_IPV4_GATEWAY=
-# Required: directory on the Cloud Storage VM where the contents of docker/ will be deployed.
-CLOUD_STORAGE_DEPLOY_PATH=
-# Required: Linux user created by cloud-init and used by Ansible and SSH (for example, deploy).
-CLOUD_STORAGE_DEPLOY_USER=
-
+# Required: Proxmox host address over Tailscale used by the GitHub Actions runners.
+TS_PROXMOX_HOSTNAME=
+# Optional: set to pin the Proxmox host key fingerprint (for example the output
+# of "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub").
+PROXMOX_HOST_KEY_FINGERPRINT=
 # Required by every GitHub Actions deployment job to join the Tailscale network.
 # Create an OAuth client in Tailscale with permission to authenticate the tagged runner.
 # Set these here or export them in your shell (exported values are used when empty).

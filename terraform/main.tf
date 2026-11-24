@@ -29,9 +29,22 @@ provider "proxmox" {
   insecure  = var.proxmox_tls_insecure
 }
 
+locals {
+  cfg = yamldecode(file("${path.module}/../config/infra.yaml"))
+
+  proxmox_node       = local.cfg.proxmox.node
+  vm_id              = local.cfg.cloud_storage.id
+  vm_datastore       = local.cfg.cloud_storage.datastore
+  vm_image_datastore = local.cfg.cloud_storage.image_datastore
+  vm_ipv4_address    = local.cfg.cloud_storage.network.ip
+  vm_ipv4_cidr       = local.cfg.cloud_storage.network.cidr
+  vm_ipv4_gateway    = local.cfg.cloud_storage.network.gateway
+  docker_user        = local.cfg.cloud_storage.deploy.user
+}
+
 resource "proxmox_virtual_environment_vm" "template" {
   name      = var.template.name
-  node_name = var.proxmox_node
+  node_name = local.proxmox_node
   vm_id     = var.template.vm_id
   started   = false
   template  = true
@@ -45,9 +58,9 @@ resource "proxmox_virtual_environment_vm" "template" {
   }
 
   disk {
-    datastore_id = var.vm_datastore
+    datastore_id = local.vm_datastore
     file_format  = "raw"
-    import_from  = "${var.vm_image_datastore}:import/${var.template.image_file_name}"
+    import_from  = "${local.vm_image_datastore}:import/${var.template.image_file_name}"
     interface    = "scsi0"
   }
 
@@ -56,7 +69,7 @@ resource "proxmox_virtual_environment_vm" "template" {
   }
 
   initialization {
-    datastore_id = var.vm_datastore
+    datastore_id = local.vm_datastore
   }
 
   serial_device {
@@ -66,11 +79,11 @@ resource "proxmox_virtual_environment_vm" "template" {
 
 resource "proxmox_virtual_environment_vm" "cloud_storage" {
   name      = var.vm_name
-  node_name = var.proxmox_node
-  vm_id     = var.vm_id
+  node_name = local.proxmox_node
+  vm_id     = local.vm_id
 
   clone {
-    datastore_id = var.vm_datastore
+    datastore_id = local.vm_datastore
     vm_id        = proxmox_virtual_environment_vm.template.vm_id
     full         = true
   }
@@ -84,7 +97,7 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
   }
 
   disk {
-    datastore_id = var.vm_datastore
+    datastore_id = local.vm_datastore
     interface    = "scsi0"
     size         = var.vm_disk_gb
   }
@@ -94,21 +107,21 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
   }
 
   initialization {
-    datastore_id = var.vm_datastore
+    datastore_id = local.vm_datastore
 
     dns {
-      servers = [var.vm_ipv4_gateway]
+      servers = [local.vm_ipv4_gateway]
     }
 
     ip_config {
       ipv4 {
-        address = "${var.vm_ipv4_address}/${var.vm_ipv4_cidr}"
-        gateway = var.vm_ipv4_gateway
+        address = "${local.vm_ipv4_address}/${local.vm_ipv4_cidr}"
+        gateway = local.vm_ipv4_gateway
       }
     }
 
     user_account {
-      username = var.docker_user
+      username = local.docker_user
       keys     = [var.ssh_public_key]
     }
   }

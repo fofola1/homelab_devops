@@ -4,21 +4,21 @@
   become: true
   gather_facts: true
 
+  vars_files:
+    - ../config/infra.yaml
+
   vars:
     zfs_pool_name: tank
-    zfs_pool_drives: "{{ lookup('env', 'ZFS_POOL_DRIVES') | default('', true) | split(',') }}"
-    zfs_pool_raid_level: "{{ lookup('env', 'ZFS_POOL_RAID_LEVEL') | default('raidz1', true) }}"
 
   tasks:
     - name: Verify the ZFS pool configuration
       ansible.builtin.assert:
         that:
-          - zfs_pool_drives | length > 0
-          - zfs_pool_raid_level | length > 0
+          - proxmox.zfs.drives | length > 0
+          - proxmox.zfs.raid_level | length > 0
         fail_msg: >-
-          ZFS_POOL_DRIVES must be set to a comma-separated list of whole disk
-          devices for the pool, for example /dev/disk/by-id/scsi-SATA_.... ZFS_POOL_RAID_LEVEL
-          defaults to raidz1 when unset.
+          The ZFS pool must be configured in config/infra.yaml with a list of
+          whole disk devices and a RAID level.
 
     - name: Check ZFS pool status
       ansible.builtin.command: zpool status {{ zfs_pool_name }}
@@ -28,7 +28,7 @@
 
     - name: Create ZFS pool
       ansible.builtin.command: >-
-        zpool create -f {{ zfs_pool_name }} {{ zfs_pool_raid_level }} {{ zfs_pool_drives | join(' ') }}
+        zpool create -f {{ zfs_pool_name }} {{ proxmox.zfs.raid_level }} {{ proxmox.zfs.drives | join(' ') }}
       when: zfs_pool_status.rc != 0
       changed_when: true
 
@@ -37,9 +37,8 @@
   become: true
   gather_facts: true
 
-  vars:
-    cloud_storage_deploy_path: "{{ lookup('env', 'CLOUD_STORAGE_DEPLOY_PATH') }}"
-    cloud_storage_ipv4_gateway: "{{ lookup('env', 'CLOUD_STORAGE_IPV4_GATEWAY') }}"
+  vars_files:
+    - ../config/infra.yaml
 
   pre_tasks:
     - name: Wait for cloud-init to finish
@@ -49,9 +48,9 @@
     - name: Verify the deployment settings are configured
       ansible.builtin.assert:
         that:
-          - cloud_storage_deploy_path | length > 0
-          - cloud_storage_ipv4_gateway | length > 0
-        fail_msg: "CLOUD_STORAGE_DEPLOY_PATH and CLOUD_STORAGE_IPV4_GATEWAY must be set."
+          - cloud_storage.deploy.path | length > 0
+          - cloud_storage.network.gateway | length > 0
+        fail_msg: "The deployment path and network gateway must be set in config/infra.yaml."
 
   tasks:
     - name: Inspect the VM network configuration
@@ -74,7 +73,7 @@
         dest: /etc/resolv.conf
         mode: "0644"
         content: |
-          nameserver {{ cloud_storage_ipv4_gateway }}
+          nameserver {{ cloud_storage.network.gateway }}
           nameserver 1.1.1.1
 
     - name: Verify DNS resolution
@@ -126,10 +125,10 @@
 
     - name: Create the Docker deployment directory
       ansible.builtin.file:
-        path: "{{ cloud_storage_deploy_path }}"
+        path: "{{ cloud_storage.deploy.path }}"
         state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        owner: "{{ cloud_storage.deploy.user }}"
+        group: "{{ cloud_storage.deploy.user }}"
         mode: "0755"
 
     - name: Ensure the virtiofs kernel module is loaded

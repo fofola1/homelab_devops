@@ -10,6 +10,7 @@ Terraform provisions a cloud image template and a cloud storage VM on Proxmox, A
 | `terraform/` | Proxmox provider, template profile, VM definition. |
 | `ansible/` | Playbooks and inventory that configure the Proxmox host and the Cloud Storage VM. |
 | `docker/` | Compose stack that is copied to the VM. |
+| `config/` | Committed infrastructure configuration (Proxmox node, ZFS pool, Cloud Storage VM). |
 | `scripts/` | Terraform-state, known-hosts, and Proxmox setup helpers. |
 | `docs/deployment.md` | Setup, state, networking, and troubleshooting details. |
 | `report-proxmox-state.conf.example` | Template for the local setup configuration. |
@@ -23,18 +24,11 @@ The CD pipeline detects changes and then runs five deployment stages: Ansible ho
 
 ## ZFS pool
 
-The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).
+The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
 
-The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Cloud Storage VM disk on the new pool.
+The stage runs when change detection marks the `ansible/`, `terraform/`, or `config/` paths, or when `force_deploy` is enabled. Terraform then plans the Cloud Storage VM disk on the new pool.
 
-The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and publishes the selection to the `ZFS_POOL_DRIVES` and `ZFS_POOL_RAID_LEVEL` repository variables.
-
-Publish the selected drives and the RAID level as repository variables before the first deployment:
-
-```bash
-gh variable set ZFS_POOL_DRIVES --repo fofola1/homelab_devops --body "/dev/disk/by-id/scsi-SATA_..."
-gh variable set ZFS_POOL_RAID_LEVEL --repo fofola1/homelab_devops --body "raidz1"
-```
+The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection into `config/infra.yaml`.
 
 The pool creation is idempotent: the Ansible play checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
 
@@ -47,29 +41,45 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The setup script configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the repository variables and secrets with `gh`. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
+The setup script configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the remaining repository variables and secrets with `gh`. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
 
 ## Configuration
+
+The Proxmox node, ZFS pool, and Cloud Storage VM settings live in the committed [`config/infra.yaml`](config/infra.yaml):
+
+```yaml
+proxmox:
+  node: "nas"
+  zfs:
+    raid_level: "raidz1"
+    drives:
+      - "/dev/sdc"
+      - "/dev/sdd"
+      - "/dev/sde"
+
+cloud_storage:
+  id: 120
+  datastore: "local-lvm"
+  image_datastore: "local"
+  network:
+    ip: "10.10.10.31"
+    cidr: 24
+    gateway: "10.10.10.1"
+  deploy:
+    user: "deployer"
+    path: "/opt/docker"
+```
 
 The interactive setup writes these repository variables from `report-proxmox-state.conf`:
 
 | Variable | Description |
 | --- | --- |
 | `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale. |
-| `PROXMOX_NODE` | Proxmox node name. |
-| `CLOUD_STORAGE_HOST_IP` | Static IPv4 address for the Cloud Storage VM. |
-| `CLOUD_STORAGE_ID` | VM ID for the Cloud Storage VM. |
-| `CLOUD_STORAGE_DATASTORE` | Storage for the VM disk and cloud-init drive. |
-| `CLOUD_STORAGE_IMAGE_DATASTORE` | Storage that accepts the `import` content type for cloud images. |
 | `CLOUD_STORAGE_TEMPLATE` | Template profile used by Terraform (profile file name without `.tfvars`); default `alpine-324`. |
-| `CLOUD_STORAGE_IPV4_CIDR` | Prefix length for the VM address. |
-| `CLOUD_STORAGE_IPV4_GATEWAY` | LAN gateway; also used as the VM's DNS server. |
-| `CLOUD_STORAGE_DEPLOY_PATH` | Directory on the VM for the compose stack. |
-| `CLOUD_STORAGE_DEPLOY_USER` | User created by cloud-init for SSH and Ansible. |
-| `ZFS_POOL_DRIVES` | Whole disk devices for the ZFS pool, comma-separated (for example `/dev/disk/by-id/scsi-SATA_...`). |
-| `ZFS_POOL_RAID_LEVEL` | RAID level for the ZFS pool, for example `raidz1`. |
-
-Optionally set `PROXMOX_HOST_KEY_FINGERPRINT` manually to pin the Proxmox host key (see [`docs/deployment.md`](docs/deployment.md)).
+| `PROXMOX_HOST_KEY_FINGERPRINT` | Optional pinned Proxmox host key fingerprint. |
+| `TF_STATE_S3_URL` | S3 endpoint URL when the optional S3 state backend is used. |
+| `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
+| `TERRAFORM_STATE_TO_GIT` | Whether to mirror the Terraform state to the `terraform-state` branch; default `true`. |
 
 It also creates the secrets `PROXMOX_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`.
 
@@ -86,7 +96,7 @@ To add or switch a template:
 1. Add `terraform/templates/<name>.tfvars` with the `template` object for the new image.
 2. Set the `CLOUD_STORAGE_TEMPLATE` repository variable to `<name>`.
 
-The CD workflow resolves the selected profile, uploads its image, and plans and applies the VM from it, so adding or changing a template only ever touches the new profile file and the repository variable. VM address, ID, storage, gateway, and deployment settings remain in `report-proxmox-state.conf`.
+The CD workflow resolves the selected profile, uploads its image, and plans and applies the VM from it, so adding or changing a template only ever touches the new profile file and the repository variable. VM address, ID, storage, gateway, and deployment settings remain in `config/infra.yaml`.
 
 Changing the `CLOUD_STORAGE_TEMPLATE` value requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
 
@@ -94,7 +104,7 @@ The Alpine image is not stored in the Git repository. A cloud image is a large b
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via the `CLOUD_STORAGE_TEMPLATE` repository variable. It gets the static address from the repository variables and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via the `CLOUD_STORAGE_TEMPLATE` repository variable. It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
@@ -125,7 +135,7 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 ## Troubleshooting
 
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
-- **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify `CLOUD_STORAGE_IPV4_GATEWAY`.
+- **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.
 
 More recovery notes are in [`docs/deployment.md`](docs/deployment.md).

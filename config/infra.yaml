@@ -1,0 +1,27 @@
+# Committed infrastructure configuration for the Proxmox homelab.
+#
+# Values that describe the physical setup (Proxmox node, ZFS pool, Cloud Storage
+# VM addressing) live here so they can be committed. GitHub repository variables
+# and secrets only keep deployment credentials and workflow-specific values that
+# must not be committed.
+
+proxmox:
+  node: "nas"
+  zfs:
+    raid_level: "raidz1"
+    drives:
+      - "/dev/sdc"
+      - "/dev/sdd"
+      - "/dev/sde"
+
+cloud_storage:
+  id: 120
+  datastore: "local-lvm"
+  image_datastore: "local"
+  network:
+    ip: "10.10.10.31"
+    cidr: 24
+    gateway: "10.10.10.1"
+  deploy:
+    user: "deployer"
+    path: "/opt/docker"
