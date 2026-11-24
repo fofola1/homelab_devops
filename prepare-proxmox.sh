@@ -76,8 +76,32 @@ prompt_wol_interface() {
 			printf '%s' "${interface_choice}"
 			return
 		fi
-		echo "Choose one of the listed interface numbers or names." >&2
+		echo "Choose one of the listed interfaces numbers or names." >&2
 	done
+}
+
+write_zfs_pool() {
+	local drives=$1
+	local temporary_file
+	local infra_config_file
+	temporary_file=$(mktemp)
+	infra_config_file=${script_directory}/config/infra.yaml
+	awk -v drives="${drives}" '
+		/^ *drives:/ {
+			in_list = 1
+			print
+			count = split(drives, items, ",")
+			for (i = 1; i <= count; i++) {
+				printf "      - \"%s\"\n", items[i]
+			}
+			next
+		}
+		in_list && /^ *- / { next }
+		in_list && !/^ *- / && NF > 0 { in_list = 0 }
+		{ print }
+	' "${infra_config_file}" > "${temporary_file}"
+	mv "${temporary_file}" "${infra_config_file}"
+	chmod 0644 "${infra_config_file}"
 }
 
 connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, or SSH config alias)")
@@ -138,7 +162,7 @@ if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
 	mapfile -t zfs_disk_list < <(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
 		"lsblk -d -o NAME,SIZE 2>/dev/null | tail -n +2")
 	if [[ ${#zfs_disk_list[@]} -gt 0 ]]; then
-		echo "Available whole disks:"
+		echo "Available disks on ${SSH_TARGET}:" >&2
 		zfs_index=1
 		for zfs_drive in "${zfs_disk_list[@]}"; do
 			printf '  %d) %s\n' "${zfs_index}" "${zfs_drive}"
@@ -154,16 +178,22 @@ if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
 		done
 	fi
 	if [[ -n "${zfs_pool_drives}" ]]; then
-		export ZFS_POOL_DRIVES="${zfs_pool_drives}"
-		export ZFS_POOL_RAID_LEVEL="raidz1"
+		write_zfs_pool "${zfs_pool_drives}"
 	fi
+fi
+
+proxmox_host_key_fingerprint=
+proxmox_host_key_fingerprint=$(ssh-keyscan -H "${SSH_HOST}" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | awk '{print $2}' | head -n 1 || true)
+if [[ -n "${proxmox_host_key_fingerprint}" ]]; then
+	export PROXMOX_HOST_KEY_FINGERPRINT="${proxmox_host_key_fingerprint}"
+	echo "Discovered Proxmox host key fingerprint: ${proxmox_host_key_fingerprint}" >&2
 fi
 
 report_script=${script_directory}/scripts/report-proxmox-state.sh
 [[ -f "${report_script}" ]] || die "State report script not found: ${report_script}"
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
-PVE_API_TOKEN_SECRET="${api_token_secret}" \
-	bash "${report_script}" "${connection}"
+	PVE_API_TOKEN_SECRET="${api_token_secret}" \
+		bash "${report_script}" "${connection}"
 
 echo
 echo "Done. Proxmox API user: ${pve_api_user}@pve"

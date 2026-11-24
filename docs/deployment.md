@@ -5,23 +5,18 @@ The deployment pipeline is defined in `.github/workflows/deploy.yml` and has fiv
 1. **Run Ansible (Host)** prepares the Proxmox host storage before Terraform runs.
 2. **Terraform Plan** validates the Terraform configuration against the current state.
 3. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
-4. **Run Ansible (Docker)** installs Docker Engine on the new VM and prepares the deployment directory.
-5. **Deploy Docker Workloads** copies `docker/` to the VM and runs `docker compose up`.
+4. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
+5. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
+
+The Terraform stages resolve the template profile selected by the `cloud_storage.template` value in `config/infra.yaml` from `terraform/templates/` before planning and uploading the cloud image; the image URL, file name, checksum, and checksum algorithm therefore live only in the profile file.
 
 ## ZFS pool (host storage)
 
-The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the repository variable `ZFS_POOL_DRIVES` (comma-separated device paths) with the RAID level from `ZFS_POOL_RAID_LEVEL` (default `raidz1`).
+The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
 
-The stage runs when change detection marks the `ansible/` or `terraform/` paths, or when `force_deploy` is enabled. Terraform then plans the Docker VM disk on the new pool.
+The stage runs when change detection marks the `ansible/`, `terraform/`, or `config/` paths, or when `force_deploy` is enabled. Terraform then plans the Cloud Storage VM disk on the new pool.
 
-The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection to the `ZFS_POOL_DRIVES` and `ZFS_POOL_RAID_LEVEL` repository variables.
-
-Publish the selected whole disks and the RAID level as repository variables before the first deployment:
-
-```bash
-gh variable set ZFS_POOL_DRIVES --repo fofola1/homelab_devops --body "/dev/disk/by-id/scsi-SATA_..."
-gh variable set ZFS_POOL_RAID_LEVEL --repo fofola1/homelab_devops --body "raidz1"
-```
+The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection into `config/infra.yaml`.
 
 ## First-time setup
 
@@ -32,7 +27,9 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-It configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the repository variables and secrets with the `gh` CLI. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
+The infrastructure configuration itself lives in the committed `config/infra.yaml`; fill it in there before the first deployment.
+
+It configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the remaining repository variables and secrets with the `gh` CLI. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
 
 If the deployment SSH key was created by an older version of this repository, re-run the setup (or append the public key printed by the workflow to `/root/.ssh/authorized_keys` on the Proxmox host). The workflow intentionally fails with the public key in its log when it cannot authenticate.
 
@@ -72,12 +69,12 @@ The deployment then fails when none of the discovered keys match the pinned fing
 
 ## VM networking
 
-The Docker VM gets a static address, so cloud-init does not learn DNS from DHCP. Terraform therefore configures `DOCKER_VM_IPV4_GATEWAY` as the VM's DNS server. The Ansible playbook also writes `/etc/resolv.conf` with the gateway plus `1.1.1.1`, limits APT to IPv4 with short timeouts, and updates the cache with a bounded command. A broken DNS or egress path now fails in minutes with the actual APT output instead of hanging.
+The cloud storage VM gets a static address, so cloud-init does not learn DNS from DHCP. Terraform therefore configures the gateway from `cloud_storage.network.gateway` in `config/infra.yaml` as the VM's DNS server. The Ansible playbook also writes `/etc/resolv.conf` with the gateway plus `1.1.1.1`, bounds the Alpine package manager timeouts, and updates the cache with a bounded command. A broken DNS or egress path now fails in minutes with the actual package output instead of hanging.
 
 ## Recovering from a failed apply
 
-- **ZFS pool creation failed:** check that `ZFS_POOL_DRIVES` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
+- **ZFS pool creation failed:** check that `proxmox.zfs.drives` in `config/infra.yaml` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
 - **Host key verification failed:** the workflow now refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
-- **`Failed to update apt cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix `DOCKER_VM_IPV4_GATEWAY`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
+- **`Failed to update the package cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
 - **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL step could not run. Check the SSH key authorization message and re-run `./prepare-proxmox.sh`.
 - **VM already exists:** restore the `terraform-state` branch or import the existing VM manually before applying again.

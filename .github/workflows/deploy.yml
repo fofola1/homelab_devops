@@ -38,6 +38,7 @@ jobs:
                   filters: |
                       terraform:
                           - 'terraform/**'
+                          - 'config/**'
                           - 'report-proxmox-state.conf'
                           - '.github/versions.env'
                           - 'prepare-proxmox.sh'
@@ -47,6 +48,7 @@ jobs:
                           - 'scripts/terraform-state.sh'
                       ansible:
                           - 'ansible/**'
+                          - 'config/**'
                       docker:
                           - 'docker/**'
 
@@ -80,8 +82,6 @@ jobs:
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-                  ZFS_POOL_DRIVES: ${{ vars.ZFS_POOL_DRIVES }}
-                  ZFS_POOL_RAID_LEVEL: ${{ vars.ZFS_POOL_RAID_LEVEL }}
               run: |
                   # shellcheck disable=SC2029
                   set -euo pipefail
@@ -147,20 +147,57 @@ jobs:
                   public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
                   test -n "${public_key}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
-            - name: "Upload Debian image to Proxmox"
+            - name: "Resolve template profile"
+              id: template
+              run: |
+                  set -euo pipefail
+                  template_name="$(yq '.cloud_storage.template' config/infra.yaml)"
+                  template_name="${template_name:-alpine-324}"
+                  template_file="terraform/templates/${template_name}.tfvars"
+                  test -f "${template_file}"
+                  image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_file_name=$(sed -n 's|^[[:space:]]*image_file_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum=$(sed -n 's|^[[:space:]]*image_checksum[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum_algorithm=$(sed -n 's|^[[:space:]]*image_checksum_algorithm[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  test -n "${image_url}"
+                  test -n "${image_file_name}"
+                  test -n "${image_checksum}"
+                  test -n "${image_checksum_algorithm}"
+                  echo "name=${template_name}" >> "${GITHUB_OUTPUT}"
+                  echo "tfvars=templates/${template_name}.tfvars" >> "${GITHUB_OUTPUT}"
+                  echo "image_url=${image_url}" >> "${GITHUB_OUTPUT}"
+                  echo "image_file_name=${image_file_name}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum=${image_checksum}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum_algorithm=${image_checksum_algorithm}" >> "${GITHUB_OUTPUT}"
+
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "proxmox_node=$(yq '.proxmox.node' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_id=$(yq '.cloud_storage.id' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_datastore=$(yq '.cloud_storage.datastore' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_image_datastore=$(yq '.cloud_storage.image_datastore' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_ipv4_cidr=$(yq '.cloud_storage.network.cidr' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_ipv4_gateway=$(yq '.cloud_storage.network.gateway' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+            - name: "Upload cloud image to Proxmox"
               env:
                   PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
                   PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
-                  PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
-                  IMAGE_DATASTORE: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
-                  IMAGE_URL: https://cloud.debian.org/images/cloud/bookworm/20261026-2643/debian-12-genericcloud-amd64-20261026-2643.qcow2
-                  IMAGE_FILE_NAME: debian-12-genericcloud-amd64.qcow2
-                  IMAGE_SHA512: 0464b5d4ae3aa4f658468d88da83af7857b71548b30d46dcb6282770955a747fb95a983476db90d25afd0653af607224c7ebd05122ab71faa106fd712aaad652
+                  PROXMOX_NODE: ${{ steps.infra.outputs.proxmox_node }}
+                  IMAGE_DATASTORE: ${{ steps.infra.outputs.cloud_storage_image_datastore }}
+                  IMAGE_URL: ${{ steps.template.outputs.image_url }}
+                  IMAGE_FILE_NAME: ${{ steps.template.outputs.image_file_name }}
+                  IMAGE_SHA512: ${{ steps.template.outputs.image_checksum }}
+                  IMAGE_CHECKSUM_ALGORITHM: ${{ steps.template.outputs.image_checksum_algorithm }}
               run: |
                   set -euo pipefail
                   image_path="${RUNNER_TEMP}/${IMAGE_FILE_NAME}"
                   curl --fail --location --retry 5 --output "${image_path}" "${IMAGE_URL}"
-                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | sha512sum --check --status
+                  printf '%s  %s\n' "${IMAGE_SHA512}" "${image_path}" | "${IMAGE_CHECKSUM_ALGORITHM}sum" --check --status
                   auth_header="Authorization: PVEAPIToken=${PROXMOX_API_TOKEN}"
                   content_url="${PROXMOX_API_URL}/nodes/${PROXMOX_NODE}/storage/${IMAGE_DATASTORE}/content?content=import"
                   content_response=$(mktemp)
@@ -181,19 +218,11 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
-                  TF_VAR_vm_id: ${{ vars.DOCKER_VM_ID }}
-                  TF_VAR_vm_datastore: ${{ vars.DOCKER_VM_DATASTORE }}
-                  TF_VAR_vm_image_datastore: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
-                  TF_VAR_vm_ipv4_address: ${{ vars.DOCKER_VM_HOST_IP }}
-                  TF_VAR_vm_ipv4_cidr: ${{ vars.DOCKER_VM_IPV4_CIDR }}
-                  TF_VAR_vm_ipv4_gateway: ${{ vars.DOCKER_VM_IPV4_GATEWAY }}
-                  TF_VAR_docker_user: ${{ vars.DOCKER_VM_DEPLOY_USER }}
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
-                  terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
+                  terraform plan -var-file="${{ steps.template.outputs.tfvars }}" -out=tfplan
 
     terraform-apply:
         name: "3. Terraform Apply"
@@ -273,6 +302,28 @@ jobs:
                   # shellcheck disable=SC2029
                   ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
                       "pveum acl modify /sdn/zones/localnetwork/vmbr0 -user '${api_user}' -role homelab-terraform"
+            - name: "Resolve template profile"
+              id: template
+              run: |
+                  set -euo pipefail
+                  template_name="$(yq '.cloud_storage.template' config/infra.yaml)"
+                  template_name="${template_name:-alpine-324}"
+                  template_file="terraform/templates/${template_name}.tfvars"
+                  test -f "${template_file}"
+                  image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_file_name=$(sed -n 's|^[[:space:]]*image_file_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum=$(sed -n 's|^[[:space:]]*image_checksum[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  image_checksum_algorithm=$(sed -n 's|^[[:space:]]*image_checksum_algorithm[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
+                  test -n "${image_url}"
+                  test -n "${image_file_name}"
+                  test -n "${image_checksum}"
+                  test -n "${image_checksum_algorithm}"
+                  echo "name=${template_name}" >> "${GITHUB_OUTPUT}"
+                  echo "tfvars=templates/${template_name}.tfvars" >> "${GITHUB_OUTPUT}"
+                  echo "image_url=${image_url}" >> "${GITHUB_OUTPUT}"
+                  echo "image_file_name=${image_file_name}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum=${image_checksum}" >> "${GITHUB_OUTPUT}"
+                  echo "image_checksum_algorithm=${image_checksum_algorithm}" >> "${GITHUB_OUTPUT}"
             - name: "Terraform Init & Apply"
               env:
                   PM_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
@@ -280,14 +331,6 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
-                  TF_VAR_vm_id: ${{ vars.DOCKER_VM_ID }}
-                  TF_VAR_vm_datastore: ${{ vars.DOCKER_VM_DATASTORE }}
-                  TF_VAR_vm_image_datastore: ${{ vars.DOCKER_VM_IMAGE_DATASTORE }}
-                  TF_VAR_vm_ipv4_address: ${{ vars.DOCKER_VM_HOST_IP }}
-                  TF_VAR_vm_ipv4_cidr: ${{ vars.DOCKER_VM_IPV4_CIDR }}
-                  TF_VAR_vm_ipv4_gateway: ${{ vars.DOCKER_VM_IPV4_GATEWAY }}
-                  TF_VAR_docker_user: ${{ vars.DOCKER_VM_DEPLOY_USER }}
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
@@ -295,7 +338,7 @@ jobs:
                   # Regenerate the plan in this job instead of uploading the plan
                   # file as an artifact: this repository is public and plan files
                   # contain sensitive variable values.
-                  terraform plan -var-file=templates/debian-12.tfvars -out=tfplan
+                  terraform plan -var-file="${{ steps.template.outputs.tfvars }}" -out=tfplan
                   terraform apply -auto-approve tfplan
             - name: "Save Terraform state"
               if: always()
@@ -337,14 +380,20 @@ jobs:
               uses: webfactory/ssh-agent@v0.10.0
               with:
                   ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Run Ansible Playbook"
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-                  DOCKER_VM_HOST_IP: ${{ vars.DOCKER_VM_HOST_IP }}
-                  DOCKER_VM_DEPLOY_USER: ${{ vars.DOCKER_VM_DEPLOY_USER }}
-                  DOCKER_VM_DEPLOY_PATH: ${{ vars.DOCKER_VM_DEPLOY_PATH }}
-                  DOCKER_VM_IPV4_GATEWAY: ${{ vars.DOCKER_VM_IPV4_GATEWAY }}
+                  CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
+                  CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
+                  CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
               run: |
@@ -354,8 +403,7 @@ jobs:
                   export TERRAFORM_VERSION ANSIBLE_VERSION
                   test -s ansible/inventory/proxmox.yml
                   test -f ansible/site.yml
-                  test -n "${DOCKER_VM_DEPLOY_PATH}"
-                  test -n "${DOCKER_VM_IPV4_GATEWAY}"
+                  test -n "${CLOUD_STORAGE_DEPLOY_PATH}"
                   mkdir -p ~/.ssh
                   bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
                   ssh_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
@@ -363,30 +411,30 @@ jobs:
                       echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_SSH_KEY is authorized for root."
                       exit 1
                   fi
-                  docker_vm_known_hosts=
+                  cloud_storage_known_hosts=
                   for _ in $(seq 1 60); do
                       # shellcheck disable=SC2029
-                      docker_vm_known_hosts=$(ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
-                          "ssh-keyscan -T 5 -H '${DOCKER_VM_HOST_IP}' 2>/dev/null" || true)
-                      if [[ -n "${docker_vm_known_hosts}" ]]; then
-                          printf '%s\n' "${docker_vm_known_hosts}" >> ~/.ssh/known_hosts
+                      cloud_storage_known_hosts=$(ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
+                          "ssh-keyscan -T 5 -H '${CLOUD_STORAGE_HOST_IP}' 2>/dev/null" || true)
+                      if [[ -n "${cloud_storage_known_hosts}" ]]; then
+                          printf '%s\n' "${cloud_storage_known_hosts}" >> ~/.ssh/known_hosts
                           break
                       fi
                       sleep 5
                   done
-                  if [[ -z "${docker_vm_known_hosts}" ]]; then
-                      echo "::error::Unable to retrieve SSH host keys for the Docker VM at ${DOCKER_VM_HOST_IP}."
+                  if [[ -z "${cloud_storage_known_hosts}" ]]; then
+                      echo "::error::Unable to retrieve SSH host keys for the Cloud Storage VM at ${CLOUD_STORAGE_HOST_IP}."
                       exit 1
                   fi
                   python -m pip install "ansible==${ANSIBLE_VERSION}"
-                  ansible-inventory -i ansible/inventory/proxmox.yml --graph docker_hosts
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml --list-hosts
+                  ansible-inventory -i ansible/inventory/proxmox.yml --graph cloud_storage_hosts
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml --list-hosts
                   ansible_common_args=(--ssh-common-args="-o ProxyJump=root@${TS_PROXMOX_HOSTNAME}")
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
                       -a 'timeout=300' "${ansible_common_args[@]}"
-                  ansible docker_hosts -i ansible/inventory/proxmox.yml -m command \
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m command \
                       -a 'cloud-init status --wait' "${ansible_common_args[@]}"
-                  ansible-playbook -i ansible/inventory/proxmox.yml --limit docker_hosts \
+                  ansible-playbook -i ansible/inventory/proxmox.yml --limit cloud_storage_hosts \
                       "${ansible_common_args[@]}" ansible/site.yml
 
     docker:
@@ -425,11 +473,18 @@ jobs:
               uses: webfactory/ssh-agent@v0.10.0
               with:
                   ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Deploy Compose Stacks via Remote Host"
               env:
-                  DOCKER_VM_HOST_IP: ${{ vars.DOCKER_VM_HOST_IP }}
-                  DOCKER_VM_DEPLOY_PATH: ${{ vars.DOCKER_VM_DEPLOY_PATH }}
-                  DOCKER_VM_DEPLOY_USER: ${{ vars.DOCKER_VM_DEPLOY_USER }}
+                  CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
+                  CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
+                  CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
@@ -437,9 +492,9 @@ jobs:
                   # shellcheck disable=SC2029
                   set -euo pipefail
                   test -d docker
-                  test -n "${DOCKER_VM_DEPLOY_USER}"
-                  test -n "${DOCKER_VM_HOST_IP}"
-                  test -n "${DOCKER_VM_DEPLOY_PATH}"
+                  test -n "${CLOUD_STORAGE_DEPLOY_USER}"
+                  test -n "${CLOUD_STORAGE_HOST_IP}"
+                  test -n "${CLOUD_STORAGE_DEPLOY_PATH}"
                   mkdir -p ~/.ssh
                   bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
                   jump_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
@@ -447,25 +502,25 @@ jobs:
                       echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_SSH_KEY is authorized for root."
                       exit 1
                   fi
-                  docker_vm_known_hosts=
+                  cloud_storage_known_hosts=
                   for _ in $(seq 1 60); do
                       # shellcheck disable=SC2029
-                      docker_vm_known_hosts=$(ssh "${jump_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
-                          "ssh-keyscan -T 5 -H '${DOCKER_VM_HOST_IP}' 2>/dev/null" || true)
-                      if [[ -n "${docker_vm_known_hosts}" ]]; then
-                          printf '%s\n' "${docker_vm_known_hosts}" >> ~/.ssh/known_hosts
+                      cloud_storage_known_hosts=$(ssh "${jump_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
+                          "ssh-keyscan -T 5 -H '${CLOUD_STORAGE_HOST_IP}' 2>/dev/null" || true)
+                      if [[ -n "${cloud_storage_known_hosts}" ]]; then
+                          printf '%s\n' "${cloud_storage_known_hosts}" >> ~/.ssh/known_hosts
                           break
                       fi
                       sleep 5
                   done
-                  if [[ -z "${docker_vm_known_hosts}" ]]; then
-                      echo "::error::Unable to retrieve SSH host keys for the Docker VM at ${DOCKER_VM_HOST_IP}."
+                  if [[ -z "${cloud_storage_known_hosts}" ]]; then
+                      echo "::error::Unable to retrieve SSH host keys for the Cloud Storage VM at ${CLOUD_STORAGE_HOST_IP}."
                       exit 1
                   fi
                   ssh_options=(-o "ProxyJump=root@${TS_PROXMOX_HOSTNAME}" -o BatchMode=yes -o StrictHostKeyChecking=yes)
                   # shellcheck disable=SC2029
-                  ssh "${ssh_options[@]}" "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}" "mkdir -p '${DOCKER_VM_DEPLOY_PATH}'"
-                  rsync -az --delete -e "ssh ${ssh_options[*]}" docker/ "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}:${DOCKER_VM_DEPLOY_PATH}/"
+                  ssh "${ssh_options[@]}" "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}" "mkdir -p '${CLOUD_STORAGE_DEPLOY_PATH}'"
+                  rsync -az --delete -e "ssh ${ssh_options[*]}" docker/ "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}:${CLOUD_STORAGE_DEPLOY_PATH}/"
                   # shellcheck disable=SC2029
-                  ssh "${ssh_options[@]}" "${DOCKER_VM_DEPLOY_USER}@${DOCKER_VM_HOST_IP}" \
-                  "cd '${DOCKER_VM_DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"
+                  ssh "${ssh_options[@]}" "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}" \
+                  "cd '${CLOUD_STORAGE_DEPLOY_PATH}' && docker compose pull && docker compose up -d --remove-orphans --wait && docker compose ps"

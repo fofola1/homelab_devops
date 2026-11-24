@@ -13,6 +13,19 @@ if [[ "${connection}" == ssh://* && "${ssh_target}" =~ ^(.+):([0-9]+)$ ]]; then
 	ssh_options=(-p "${BASH_REMATCH[2]}")
 fi
 
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+infra_config_file=$(cd -- "${script_directory}/.." && pwd)/config/infra.yaml
+[[ -f "${infra_config_file}" ]] || {
+	echo "Infrastructure configuration file not found: ${infra_config_file}" >&2
+	echo "Expected config/infra.yaml to be present in the repository." >&2
+	exit 1
+}
+cloud_storage_image_datastore=$(sed -n 's/^[[:space:]]*image_datastore:[[:space:]]*"\([^"]*\)".*$/\1/p' "${infra_config_file}" | head -n 1)
+[[ -n "${cloud_storage_image_datastore}" ]] || {
+	echo "Unable to read image_datastore from ${infra_config_file}." >&2
+	exit 1
+}
+
 remote_report=$(ssh "${ssh_options[@]}" "${ssh_target}" 'bash -s' <<'EOF'
 set -euo pipefail
 print_value() {
@@ -53,14 +66,13 @@ for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE PROXMOX_VERSION OS_RELEASE CPU CPU_
 	printf '%-22s %s\n' "${name}:" "${values[${name}]:-}"
 done
 
-script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
-[[ -f "${config_file}" ]] || {
-	echo "Configuration file not found: ${config_file}" >&2
+report_config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state.conf
+[[ -f "${report_config_file}" ]] || {
+	echo "Configuration file not found: ${report_config_file}" >&2
 	echo "Copy report-proxmox-state.conf.example to report-proxmox-state.conf and fill it in." >&2
 	exit 1
 }
-echo "Using configuration file: ${config_file}"
+echo "Using configuration file: ${report_config_file}"
 
 load_config() {
 	local exported_client_id=${TS_OAUTH_CLIENT_ID:-}
@@ -70,8 +82,9 @@ load_config() {
 	local exported_s3_key_id=${TF_STATE_S3_KEY_ID:-}
 	local exported_s3_key_secret=${TF_STATE_S3_KEY_SECRET:-}
 	local exported_terraform_state_to_git=${TERRAFORM_STATE_TO_GIT:-}
+	local exported_host_key_fingerprint=${PROXMOX_HOST_KEY_FINGERPRINT:-}
 	# shellcheck disable=SC1090
-	source "${config_file}"
+	source "${report_config_file}"
 	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
 	TS_OAUTH_SECRET=${TS_OAUTH_SECRET:-${exported_client_secret}}
 	TF_STATE_S3_URL=${TF_STATE_S3_URL:-${exported_s3_url}}
@@ -79,6 +92,7 @@ load_config() {
 	TF_STATE_S3_KEY_ID=${TF_STATE_S3_KEY_ID:-${exported_s3_key_id}}
 	TF_STATE_S3_KEY_SECRET=${TF_STATE_S3_KEY_SECRET:-${exported_s3_key_secret}}
 	TERRAFORM_STATE_TO_GIT=${TERRAFORM_STATE_TO_GIT:-${exported_terraform_state_to_git}}
+	PROXMOX_HOST_KEY_FINGERPRINT=${PROXMOX_HOST_KEY_FINGERPRINT:-${exported_host_key_fingerprint}}
 	TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
 	PROXMOX_NODE=${values[PROXMOX_NODE]:-}
 }
@@ -88,18 +102,8 @@ load_config
 echo
 echo "Effective GitHub configuration"
 printf '%-32s %s\n' \
-	ZFS_POOL_DRIVES "${ZFS_POOL_DRIVES:-}" \
-	ZFS_POOL_RAID_LEVEL "${ZFS_POOL_RAID_LEVEL:-}" \
 	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
-	PROXMOX_NODE "${PROXMOX_NODE}" \
-	DOCKER_VM_HOST_IP "${DOCKER_VM_HOST_IP:-}" \
-	DOCKER_VM_ID "${DOCKER_VM_ID:-}" \
-	DOCKER_VM_DATASTORE "${DOCKER_VM_DATASTORE:-}" \
-	DOCKER_VM_IMAGE_DATASTORE "${DOCKER_VM_IMAGE_DATASTORE:-}" \
-	DOCKER_VM_IPV4_CIDR "${DOCKER_VM_IPV4_CIDR:-}" \
-	DOCKER_VM_IPV4_GATEWAY "${DOCKER_VM_IPV4_GATEWAY:-}" \
-	DOCKER_VM_DEPLOY_PATH "${DOCKER_VM_DEPLOY_PATH:-}" \
-	DOCKER_VM_DEPLOY_USER "${DOCKER_VM_DEPLOY_USER:-}" \
+	PROXMOX_HOST_KEY_FINGERPRINT "${PROXMOX_HOST_KEY_FINGERPRINT:-}" \
 	TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
 	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
 	GITHUB_PROXMOX_SSH_KEY_PATH "${GITHUB_PROXMOX_SSH_KEY_PATH:-}" \
@@ -115,16 +119,11 @@ read -r -p "Add this configuration to a GitHub repository with gh? [y/N]: " publ
 [[ "${publish_answer}" =~ ^[Yy]$ ]] || exit 0
 command -v gh >/dev/null || { echo "gh CLI is required." >&2; exit 1; }
 
-echo "Edit ${config_file} to fill in all required details before continuing."
+echo "Edit ${report_config_file} to fill in all required details before continuing."
 read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
 load_config
 
-for name in DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE \
-	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH \
-	DOCKER_VM_DEPLOY_USER; do
-	[[ -n "${!name:-}" ]] || { echo "${name} is required in ${config_file}." >&2; exit 1; }
-done
 for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
 	[[ -n "${!name}" ]] || { echo "Unable to discover ${name} from the Proxmox host." >&2; exit 1; }
 done
@@ -174,23 +173,16 @@ if ! ssh "${ssh_options[@]}" -i "${github_proxmox_ssh_key_file}" -o IdentitiesOn
 fi
 echo "Authorized the deployment key for root on ${ssh_target}."
 
-for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
-	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {
-		echo "Invalid Proxmox storage name: ${storage}" >&2
-		exit 1
-	}
-done
-
-storage_query_command="pvesh get /storage/${DOCKER_VM_IMAGE_DATASTORE} --output-format json"
+storage_query_command="pvesh get /storage/${cloud_storage_image_datastore} --output-format json"
 # shellcheck disable=SC2029
 image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command}" |
 	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
-	echo "Unable to read content types for Proxmox storage ${DOCKER_VM_IMAGE_DATASTORE}." >&2
+	echo "Unable to read content types for Proxmox storage ${cloud_storage_image_datastore}." >&2
 	exit 1
 }
 if [[ ",${image_content}," != *,import,* ]]; then
-	storage_content_command="pvesm set ${DOCKER_VM_IMAGE_DATASTORE} --content ${image_content},import"
+	storage_content_command="pvesm set ${cloud_storage_image_datastore} --content ${image_content},import"
 	# shellcheck disable=SC2029
 	ssh "${ssh_options[@]}" "${ssh_target}" \
 		"${storage_content_command}"
@@ -210,14 +202,10 @@ fi
 	exit 1
 }
 
-variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
-if [[ -n "${ZFS_POOL_DRIVES:-}" ]]; then
-	variables+=(ZFS_POOL_DRIVES ZFS_POOL_RAID_LEVEL)
+gh variable set TS_PROXMOX_HOSTNAME --repo "${repository}" --body "${TS_PROXMOX_HOSTNAME}"
+if [[ -n "${PROXMOX_HOST_KEY_FINGERPRINT:-}" ]]; then
+	gh variable set PROXMOX_HOST_KEY_FINGERPRINT --repo "${repository}" --body "${PROXMOX_HOST_KEY_FINGERPRINT}"
 fi
-for name in "${variables[@]}"; do
-	gh variable set "${name}" --repo "${repository}" --body "${!name:-${values[${name}]:-}}"
-done
-
 gh secret set TS_OAUTH_CLIENT_ID --repo "${repository}" --app actions --body "${TS_OAUTH_CLIENT_ID}"
 gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_OAUTH_SECRET}"
 gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${github_proxmox_ssh_key_file}"

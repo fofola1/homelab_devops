@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "${repo_root}"
 
-source_directories=(terraform ansible docker)
+source_directories=(terraform ansible docker config)
 
 for directory in "${source_directories[@]}"; do
 	test -d "${directory}"
@@ -18,3 +18,5 @@ for directory in "${source_directories[@]}"; do
 	test "${#files[@]}" -gt 0
 	printf 'Found %d relevant file(s) in %s\n' "${#files[@]}" "${directory}"
 done
+
+test -f config/infra.yaml

@@ -63,6 +63,7 @@ jobs:
                   source .github/versions.env
                   test -d ansible
                   python -m pip install "ansible-lint==${ANSIBLE_LINT_VERSION}"
+                  ansible-galaxy collection install ansible.posix
                   ansible-lint ansible/
 
     lint-docker:
