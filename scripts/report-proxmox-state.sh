@@ -92,14 +92,14 @@ printf '%-32s %s\n' \
 	ZFS_POOL_RAID_LEVEL "${ZFS_POOL_RAID_LEVEL:-}" \
 	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
 	PROXMOX_NODE "${PROXMOX_NODE}" \
-	DOCKER_VM_HOST_IP "${DOCKER_VM_HOST_IP:-}" \
-	DOCKER_VM_ID "${DOCKER_VM_ID:-}" \
-	DOCKER_VM_DATASTORE "${DOCKER_VM_DATASTORE:-}" \
-	DOCKER_VM_IMAGE_DATASTORE "${DOCKER_VM_IMAGE_DATASTORE:-}" \
-	DOCKER_VM_IPV4_CIDR "${DOCKER_VM_IPV4_CIDR:-}" \
-	DOCKER_VM_IPV4_GATEWAY "${DOCKER_VM_IPV4_GATEWAY:-}" \
-	DOCKER_VM_DEPLOY_PATH "${DOCKER_VM_DEPLOY_PATH:-}" \
-	DOCKER_VM_DEPLOY_USER "${DOCKER_VM_DEPLOY_USER:-}" \
+	CLOUD_STORAGE_HOST_IP "${CLOUD_STORAGE_HOST_IP:-}" \
+	CLOUD_STORAGE_ID "${CLOUD_STORAGE_ID:-}" \
+	CLOUD_STORAGE_DATASTORE "${CLOUD_STORAGE_DATASTORE:-}" \
+	CLOUD_STORAGE_IMAGE_DATASTORE "${CLOUD_STORAGE_IMAGE_DATASTORE:-}" \
+	CLOUD_STORAGE_IPV4_CIDR "${CLOUD_STORAGE_IPV4_CIDR:-}" \
+	CLOUD_STORAGE_IPV4_GATEWAY "${CLOUD_STORAGE_IPV4_GATEWAY:-}" \
+	CLOUD_STORAGE_DEPLOY_PATH "${CLOUD_STORAGE_DEPLOY_PATH:-}" \
+	CLOUD_STORAGE_DEPLOY_USER "${CLOUD_STORAGE_DEPLOY_USER:-}" \
 	TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
 	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
 	GITHUB_PROXMOX_SSH_KEY_PATH "${GITHUB_PROXMOX_SSH_KEY_PATH:-}" \
@@ -120,9 +120,9 @@ read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
 load_config
 
-for name in DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE \
-	DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH \
-	DOCKER_VM_DEPLOY_USER; do
+for name in CLOUD_STORAGE_HOST_IP CLOUD_STORAGE_ID CLOUD_STORAGE_DATASTORE CLOUD_STORAGE_IMAGE_DATASTORE \
+	CLOUD_STORAGE_IPV4_CIDR CLOUD_STORAGE_IPV4_GATEWAY CLOUD_STORAGE_DEPLOY_PATH \
+	CLOUD_STORAGE_DEPLOY_USER; do
 	[[ -n "${!name:-}" ]] || { echo "${name} is required in ${config_file}." >&2; exit 1; }
 done
 for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
@@ -174,23 +174,23 @@ if ! ssh "${ssh_options[@]}" -i "${github_proxmox_ssh_key_file}" -o IdentitiesOn
 fi
 echo "Authorized the deployment key for root on ${ssh_target}."
 
-for storage in "${DOCKER_VM_DATASTORE}" "${DOCKER_VM_IMAGE_DATASTORE}"; do
+for storage in "${CLOUD_STORAGE_DATASTORE}" "${CLOUD_STORAGE_IMAGE_DATASTORE}"; do
 	[[ "${storage}" =~ ^[A-Za-z0-9._-]+$ ]] || {
 		echo "Invalid Proxmox storage name: ${storage}" >&2
 		exit 1
 	}
 done
 
-storage_query_command="pvesh get /storage/${DOCKER_VM_IMAGE_DATASTORE} --output-format json"
+storage_query_command="pvesh get /storage/${CLOUD_STORAGE_IMAGE_DATASTORE} --output-format json"
 # shellcheck disable=SC2029
 image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command}" |
 	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
-	echo "Unable to read content types for Proxmox storage ${DOCKER_VM_IMAGE_DATASTORE}." >&2
+	echo "Unable to read content types for Proxmox storage ${CLOUD_STORAGE_IMAGE_DATASTORE}." >&2
 	exit 1
 }
 if [[ ",${image_content}," != *,import,* ]]; then
-	storage_content_command="pvesm set ${DOCKER_VM_IMAGE_DATASTORE} --content ${image_content},import"
+	storage_content_command="pvesm set ${CLOUD_STORAGE_IMAGE_DATASTORE} --content ${image_content},import"
 	# shellcheck disable=SC2029
 	ssh "${ssh_options[@]}" "${ssh_target}" \
 		"${storage_content_command}"
@@ -210,7 +210,7 @@ fi
 	exit 1
 }
 
-variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE DOCKER_VM_HOST_IP DOCKER_VM_ID DOCKER_VM_DATASTORE DOCKER_VM_IMAGE_DATASTORE DOCKER_VM_IPV4_CIDR DOCKER_VM_IPV4_GATEWAY DOCKER_VM_DEPLOY_PATH DOCKER_VM_DEPLOY_USER)
+variables=(TS_PROXMOX_HOSTNAME PROXMOX_NODE CLOUD_STORAGE_HOST_IP CLOUD_STORAGE_ID CLOUD_STORAGE_DATASTORE CLOUD_STORAGE_IMAGE_DATASTORE CLOUD_STORAGE_IPV4_CIDR CLOUD_STORAGE_IPV4_GATEWAY CLOUD_STORAGE_DEPLOY_PATH CLOUD_STORAGE_DEPLOY_USER)
 if [[ -n "${ZFS_POOL_DRIVES:-}" ]]; then
 	variables+=(ZFS_POOL_DRIVES ZFS_POOL_RAID_LEVEL)
 fi

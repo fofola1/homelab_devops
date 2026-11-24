@@ -3,8 +3,8 @@ all:
     cloud_storage_hosts:
       hosts:
         cloud_storage_vm:
-          ansible_host: "{{ lookup('env', 'DOCKER_VM_HOST_IP') }}"
-          ansible_user: "{{ lookup('env', 'DOCKER_VM_DEPLOY_USER') }}"
+          ansible_host: "{{ lookup('env', 'CLOUD_STORAGE_HOST_IP') }}"
+          ansible_user: "{{ lookup('env', 'CLOUD_STORAGE_DEPLOY_USER') }}"
     proxmox_hosts:
       hosts:
         proxmox:
