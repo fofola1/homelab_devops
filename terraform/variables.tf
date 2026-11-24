@@ -12,10 +12,6 @@ variable "proxmox_tls_insecure" {
   default = true
 }
 
-variable "proxmox_node" {
-  type = string
-}
-
 variable "template" {
   type = object({
     name                     = string
@@ -25,10 +21,6 @@ variable "template" {
     image_checksum           = optional(string)
     image_checksum_algorithm = optional(string)
   })
-}
-
-variable "vm_id" {
-  type = number
 }
 
 variable "vm_name" {
@@ -51,34 +43,9 @@ variable "vm_disk_gb" {
   default = 64
 }
 
-variable "vm_datastore" {
-  type = string
-}
-
-variable "vm_image_datastore" {
-  type = string
-}
-
 variable "vm_network_bridge" {
   type    = string
   default = "vmbr0"
-}
-
-variable "vm_ipv4_address" {
-  type = string
-}
-
-variable "vm_ipv4_cidr" {
-  type = number
-}
-
-variable "vm_ipv4_gateway" {
-  type = string
-}
-
-variable "docker_user" {
-  type    = string
-  default = "alpine"
 }
 
 variable "ssh_public_key" {

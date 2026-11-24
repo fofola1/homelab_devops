@@ -38,6 +38,7 @@ jobs:
                   filters: |
                       terraform:
                           - 'terraform/**'
+                          - 'config/**'
                           - 'report-proxmox-state.conf'
                           - '.github/versions.env'
                           - 'prepare-proxmox.sh'
@@ -47,6 +48,7 @@ jobs:
                           - 'scripts/terraform-state.sh'
                       ansible:
                           - 'ansible/**'
+                          - 'config/**'
                       docker:
                           - 'docker/**'
 
@@ -80,8 +82,6 @@ jobs:
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-                  ZFS_POOL_DRIVES: ${{ vars.ZFS_POOL_DRIVES }}
-                  ZFS_POOL_RAID_LEVEL: ${{ vars.ZFS_POOL_RAID_LEVEL }}
               run: |
                   # shellcheck disable=SC2029
                   set -euo pipefail
@@ -171,12 +171,25 @@ jobs:
                   echo "image_checksum=${image_checksum}" >> "${GITHUB_OUTPUT}"
                   echo "image_checksum_algorithm=${image_checksum_algorithm}" >> "${GITHUB_OUTPUT}"
 
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "proxmox_node=$(yq '.proxmox.node' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_id=$(yq '.cloud_storage.id' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_datastore=$(yq '.cloud_storage.datastore' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_image_datastore=$(yq '.cloud_storage.image_datastore' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_ipv4_cidr=$(yq '.cloud_storage.network.cidr' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_ipv4_gateway=$(yq '.cloud_storage.network.gateway' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Upload cloud image to Proxmox"
               env:
                   PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
                   PROXMOX_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
-                  PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
-                  IMAGE_DATASTORE: ${{ vars.CLOUD_STORAGE_IMAGE_DATASTORE }}
+                  PROXMOX_NODE: ${{ steps.infra.outputs.proxmox_node }}
+                  IMAGE_DATASTORE: ${{ steps.infra.outputs.cloud_storage_image_datastore }}
                   IMAGE_URL: ${{ steps.template.outputs.image_url }}
                   IMAGE_FILE_NAME: ${{ steps.template.outputs.image_file_name }}
                   IMAGE_SHA512: ${{ steps.template.outputs.image_checksum }}
@@ -206,14 +219,6 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
-                  TF_VAR_vm_id: ${{ vars.CLOUD_STORAGE_ID }}
-                  TF_VAR_vm_datastore: ${{ vars.CLOUD_STORAGE_DATASTORE }}
-                  TF_VAR_vm_image_datastore: ${{ vars.CLOUD_STORAGE_IMAGE_DATASTORE }}
-                  TF_VAR_vm_ipv4_address: ${{ vars.CLOUD_STORAGE_HOST_IP }}
-                  TF_VAR_vm_ipv4_cidr: ${{ vars.CLOUD_STORAGE_IPV4_CIDR }}
-                  TF_VAR_vm_ipv4_gateway: ${{ vars.CLOUD_STORAGE_IPV4_GATEWAY }}
-                  TF_VAR_docker_user: ${{ vars.CLOUD_STORAGE_DEPLOY_USER }}
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
@@ -328,14 +333,6 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_proxmox_node: ${{ vars.PROXMOX_NODE }}
-                  TF_VAR_vm_id: ${{ vars.CLOUD_STORAGE_ID }}
-                  TF_VAR_vm_datastore: ${{ vars.CLOUD_STORAGE_DATASTORE }}
-                  TF_VAR_vm_image_datastore: ${{ vars.CLOUD_STORAGE_IMAGE_DATASTORE }}
-                  TF_VAR_vm_ipv4_address: ${{ vars.CLOUD_STORAGE_HOST_IP }}
-                  TF_VAR_vm_ipv4_cidr: ${{ vars.CLOUD_STORAGE_IPV4_CIDR }}
-                  TF_VAR_vm_ipv4_gateway: ${{ vars.CLOUD_STORAGE_IPV4_GATEWAY }}
-                  TF_VAR_docker_user: ${{ vars.CLOUD_STORAGE_DEPLOY_USER }}
                   TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
@@ -385,14 +382,20 @@ jobs:
               uses: webfactory/ssh-agent@v0.10.0
               with:
                   ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Run Ansible Playbook"
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-                  CLOUD_STORAGE_HOST_IP: ${{ vars.CLOUD_STORAGE_HOST_IP }}
-                  CLOUD_STORAGE_DEPLOY_USER: ${{ vars.CLOUD_STORAGE_DEPLOY_USER }}
-                  CLOUD_STORAGE_DEPLOY_PATH: ${{ vars.CLOUD_STORAGE_DEPLOY_PATH }}
-                  CLOUD_STORAGE_IPV4_GATEWAY: ${{ vars.CLOUD_STORAGE_IPV4_GATEWAY }}
+                  CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
+                  CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
+                  CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
               run: |
@@ -403,7 +406,6 @@ jobs:
                   test -s ansible/inventory/proxmox.yml
                   test -f ansible/site.yml
                   test -n "${CLOUD_STORAGE_DEPLOY_PATH}"
-                  test -n "${CLOUD_STORAGE_IPV4_GATEWAY}"
                   mkdir -p ~/.ssh
                   bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
                   ssh_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
@@ -473,11 +475,18 @@ jobs:
               uses: webfactory/ssh-agent@v0.10.0
               with:
                   ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+            - name: "Resolve infrastructure configuration"
+              id: infra
+              run: |
+                  set -euo pipefail
+                  echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Deploy Compose Stacks via Remote Host"
               env:
-                  CLOUD_STORAGE_HOST_IP: ${{ vars.CLOUD_STORAGE_HOST_IP }}
-                  CLOUD_STORAGE_DEPLOY_PATH: ${{ vars.CLOUD_STORAGE_DEPLOY_PATH }}
-                  CLOUD_STORAGE_DEPLOY_USER: ${{ vars.CLOUD_STORAGE_DEPLOY_USER }}
+                  CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
+                  CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
+                  CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}

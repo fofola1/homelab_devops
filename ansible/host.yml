@@ -4,21 +4,21 @@
   become: true
   gather_facts: true
 
+  vars_files:
+    - ../config/infra.yaml
+
   vars:
     zfs_pool_name: tank
-    zfs_pool_drives: "{{ lookup('env', 'ZFS_POOL_DRIVES') | default('', true) | split(',') }}"
-    zfs_pool_raid_level: "{{ lookup('env', 'ZFS_POOL_RAID_LEVEL') | default('raidz1', true) }}"
 
   tasks:
     - name: Verify the ZFS pool configuration
       ansible.builtin.assert:
         that:
-          - zfs_pool_drives | length > 0
-          - zfs_pool_raid_level | length > 0
+          - proxmox.zfs.drives | length > 0
+          - proxmox.zfs.raid_level | length > 0
         fail_msg: >-
-          ZFS_POOL_DRIVES must be set to a comma-separated list of whole disk
-          devices for the pool, for example /dev/disk/by-id/scsi-SATA_.... ZFS_POOL_RAID_LEVEL
-          defaults to raidz1 when unset.
+          The ZFS pool must be configured in config/infra.yaml with a list of
+          whole disk devices and a RAID level.
 
     - name: Check ZFS pool status
       ansible.builtin.command: zpool status {{ zfs_pool_name }}
@@ -28,6 +28,6 @@
 
     - name: Create ZFS pool
       ansible.builtin.command: >-
-        zpool create -f {{ zfs_pool_name }} {{ zfs_pool_raid_level }} {{ zfs_pool_drives | join(' ') }}
+        zpool create -f {{ zfs_pool_name }} {{ proxmox.zfs.raid_level }} {{ proxmox.zfs.drives | join(' ') }}
       when: zfs_pool_status.rc != 0
       changed_when: true
