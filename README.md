@@ -66,7 +66,7 @@ cloud_storage:
     cidr: 24
     gateway: "10.10.10.1"
   deploy:
-    user: "deployer"
+    user: "alpine"
     path: "/opt/docker"
 ```
 
