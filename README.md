@@ -93,17 +93,17 @@ Template profiles live in `terraform/templates/` and each `.tfvars` file holds o
 To add or switch a template:
 
 1. Add `terraform/templates/<name>.tfvars` with the `template` object for the new image.
-2. Set the `CLOUD_STORAGE_TEMPLATE` repository variable to `<name>`.
+2. Set `cloud_storage.template` in `config/infra.yaml` to `<name>`.
 
 The CD workflow resolves the selected profile, uploads its image, and plans and applies the VM from it, so adding or changing a template only ever touches the new profile file and the repository variable. VM address, ID, storage, gateway, and deployment settings remain in `config/infra.yaml`.
 
-Changing the `CLOUD_STORAGE_TEMPLATE` value requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
+Changing the `cloud_storage.template` value in `config/infra.yaml` requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
 
 The Alpine image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via the `CLOUD_STORAGE_TEMPLATE` repository variable. It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
