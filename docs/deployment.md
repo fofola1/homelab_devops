@@ -8,7 +8,7 @@ The deployment pipeline is defined in `.github/workflows/deploy.yml` and has fiv
 4. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
 5. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
 
-The Terraform stages resolve the template profile selected by the `CLOUD_STORAGE_TEMPLATE` repository variable from `terraform/templates/` before planning and uploading the cloud image; the image URL, file name, checksum, and checksum algorithm therefore live only in the profile file.
+The Terraform stages resolve the template profile selected by the `cloud_storage.template` value in `config/infra.yaml` from `terraform/templates/` before planning and uploading the cloud image; the image URL, file name, checksum, and checksum algorithm therefore live only in the profile file.
 
 ## ZFS pool (host storage)
 

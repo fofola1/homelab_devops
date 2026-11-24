@@ -75,7 +75,6 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | Variable | Description |
 | --- | --- |
 | `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale (fetched automatically during setup). |
-| `CLOUD_STORAGE_TEMPLATE` | Template profile used by Terraform (profile file name without `.tfvars`); default `alpine-324`. |
 | `PROXMOX_HOST_KEY_FINGERPRINT` | Pinned Proxmox host key fingerprint (fetched automatically during setup). |
 | `TF_STATE_S3_URL` | S3 endpoint URL when the optional S3 state backend is used. |
 | `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
@@ -89,22 +88,22 @@ When the optional S3 state backend is configured, it also creates the repository
 
 The first CD run downloads the selected cloud image, uploads it to Proxmox, and creates a reusable template through Terraform. The cloud storage VM is then cloned from that managed template, so a clean Proxmox installation does not require a pre-existing template.
 
-Template profiles live in `terraform/templates/` and each `.tfvars` file holds one `template` object with the image URL, file name, checksum, and Proxmox VM ID for that image. The profile used by the deployment is selected with the `CLOUD_STORAGE_TEMPLATE` repository variable, which holds the profile file name without the `.tfvars` suffix (for example `alpine-324`).
+Template profiles live in `terraform/templates/` and each `.tfvars` file holds one `template` object with the image URL, file name, checksum, and Proxmox VM ID for that image. The profile used by the deployment is selected with the `cloud_storage.template` value in `config/infra.yaml` (default `alpine-324`), which holds the profile file name without the `.tfvars` suffix (for example `alpine-324`).
 
 To add or switch a template:
 
 1. Add `terraform/templates/<name>.tfvars` with the `template` object for the new image.
-2. Set the `CLOUD_STORAGE_TEMPLATE` repository variable to `<name>`.
+2. Set `cloud_storage.template` in `config/infra.yaml` to `<name>`.
 
 The CD workflow resolves the selected profile, uploads its image, and plans and applies the VM from it, so adding or changing a template only ever touches the new profile file and the repository variable. VM address, ID, storage, gateway, and deployment settings remain in `config/infra.yaml`.
 
-Changing the `CLOUD_STORAGE_TEMPLATE` value requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
+Changing the `cloud_storage.template` value in `config/infra.yaml` requires a manual workflow run (`workflow_dispatch`) to trigger a deployment.
 
 The Alpine image is not stored in the Git repository. A cloud image is a large binary artifact, and GitHub rejects normal files above 100 MB. Git LFS or a GitHub Release asset could store it, but both add another artifact dependency and the release asset would still need to be uploaded before the first deployment. The template profile uses a verified direct mirror URL instead. Terraform imports it as a `raw` disk, which is required by LVM-thin storage.
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via the `CLOUD_STORAGE_TEMPLATE` repository variable. It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.

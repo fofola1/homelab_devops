@@ -15,6 +15,7 @@ proxmox:
       - "/dev/sde"
 
 cloud_storage:
+  template: "alpine-324"
   id: 120
   datastore: "local-lvm"
   image_datastore: "local"

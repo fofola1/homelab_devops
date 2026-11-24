@@ -149,11 +149,10 @@ jobs:
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
             - name: "Resolve template profile"
               id: template
-              env:
-                  CLOUD_STORAGE_TEMPLATE: ${{ vars.CLOUD_STORAGE_TEMPLATE }}
               run: |
                   set -euo pipefail
-                  template_name="${CLOUD_STORAGE_TEMPLATE:-alpine-324}"
+                  template_name="$(yq '.cloud_storage.template' config/infra.yaml)"
+                  template_name="${template_name:-alpine-324}"
                   template_file="terraform/templates/${template_name}.tfvars"
                   test -f "${template_file}"
                   image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
@@ -305,11 +304,10 @@ jobs:
                       "pveum acl modify /sdn/zones/localnetwork/vmbr0 -user '${api_user}' -role homelab-terraform"
             - name: "Resolve template profile"
               id: template
-              env:
-                  CLOUD_STORAGE_TEMPLATE: ${{ vars.CLOUD_STORAGE_TEMPLATE }}
               run: |
                   set -euo pipefail
-                  template_name="${CLOUD_STORAGE_TEMPLATE:-alpine-324}"
+                  template_name="$(yq '.cloud_storage.template' config/infra.yaml)"
+                  template_name="${template_name:-alpine-324}"
                   template_file="terraform/templates/${template_name}.tfvars"
                   test -f "${template_file}"
                   image_url=$(sed -n 's|^[[:space:]]*image_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "${template_file}" | head -n 1)
