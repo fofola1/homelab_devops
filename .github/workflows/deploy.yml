@@ -54,62 +54,10 @@ jobs:
                       docker:
                           - 'docker/**'
 
-    ansible-host:
-        name: "1. Run Ansible (Host)"
-        timeout-minutes: 90
-        needs: [detect-changes]
-        if: |
-            always() &&
-            (
-                needs.detect-changes.outputs.ansible == 'true' ||
-                needs.detect-changes.outputs.terraform == 'true' ||
-                needs.detect-changes.outputs.force_deploy == 'true'
-            )
-        runs-on: ubuntu-latest
-        environment: prod
-        steps:
-            - name: "Checkout"
-              uses: actions/checkout@v7.0.1
-            - name: "Connect to Tailscale"
-              uses: tailscale/github-action@v4.4.0
-              with:
-                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-                  oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-                  tags: tag:proxmox-ci
-            - name: "Setup SSH Agent"
-              uses: webfactory/ssh-agent@v0.10.0
-              with:
-                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
-            - name: "Run Ansible Playbook"
-              env:
-                  ANSIBLE_HOST_KEY_CHECKING: "true"
-                  TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-              run: |
-                  # shellcheck disable=SC2029
-                  set -euo pipefail
-                  source .github/versions.env
-                  export TERRAFORM_VERSION ANSIBLE_VERSION
-                  test -s ansible/inventory/proxmox.yml
-                  test -f ansible/host.yml
-                  test -n "${TS_PROXMOX_HOSTNAME}"
-                  mkdir -p ~/.ssh
-                  bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
-                  ssh_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
-                  if ! ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" true; then
-                      echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed."
-                      exit 1
-                  fi
-                  python -m pip install "ansible==${ANSIBLE_VERSION}"
-                  ansible-inventory -i ansible/inventory/proxmox.yml --graph proxmox_hosts
-                  ansible proxmox_hosts -i ansible/inventory/proxmox.yml --list-hosts
-                  ansible_common_args=(--ssh-common-args="-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes")
-                  ansible proxmox_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection -a 'timeout=300' "${ansible_common_args[@]}"
-                  ansible-playbook -i ansible/inventory/proxmox.yml --limit proxmox_hosts "${ansible_common_args[@]}" ansible/host.yml
-
     terraform-plan:
-        name: "2. Terraform Plan"
+        name: "1. Terraform Plan"
         timeout-minutes: 30
-        needs: [detect-changes, ansible-host]
+        needs: [detect-changes]
         if: needs.detect-changes.outputs.terraform == 'true' || needs.detect-changes.outputs.force_deploy == 'true'
         runs-on: ubuntu-latest
         env:
@@ -139,14 +87,14 @@ jobs:
               uses: hashicorp/setup-terraform@v4.0.1
               with:
                   terraform_version: ${{ steps.versions.outputs.terraform_version }}
-            - name: "Prepare VM SSH key"
+            - name: "Prepare VM deploy SSH key"
               id: ssh-key
               env:
-                  PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY }}
+                  CLOUD_STORAGE_DEPLOY_SSH_KEY: ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
               run: |
                   set -euo pipefail
-                  test -n "${PROXMOX_SSH_KEY}"
-                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
+                  test -n "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"
+                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
                   test -n "${public_key}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
             - name: "Resolve template profile"
@@ -184,7 +132,7 @@ jobs:
                   echo "cloud_storage_ipv4_cidr=$(yq '.cloud_storage.network.cidr' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_ipv4_gateway=$(yq '.cloud_storage.network.gateway' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
-                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Upload cloud image to Proxmox"
               env:
                   PROXMOX_API_URL: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/api2/json
@@ -220,14 +168,14 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+                  TF_VAR_vm_deploy_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
                   terraform plan -var-file="${{ steps.template.outputs.tfvars }}" -out=tfplan
 
     terraform-apply:
-        name: "3. Terraform Apply"
+        name: "2. Terraform Apply"
         timeout-minutes: 45
         needs: [detect-changes, terraform-plan]
         environment: prod
@@ -262,48 +210,16 @@ jobs:
               uses: hashicorp/setup-terraform@v4.0.1
               with:
                   terraform_version: ${{ steps.versions.outputs.terraform_version }}
-            - name: "Prepare VM SSH key"
+            - name: "Prepare VM deploy SSH key"
               id: ssh-key
               env:
-                  PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY }}
+                  CLOUD_STORAGE_DEPLOY_SSH_KEY: ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
               run: |
                   set -euo pipefail
-                  test -n "${PROXMOX_SSH_KEY}"
-                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${PROXMOX_SSH_KEY}"))
+                  test -n "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"
+                  public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
                   test -n "${public_key}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
-            - name: "Ensure Terraform SDN ACL"
-              env:
-                  PVE_API_TOKEN_ID: ${{ secrets.PVE_API_TOKEN_ID }}
-                  PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
-                  PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
-                  PROXMOX_SSH_KEY: ${{ secrets.PROXMOX_SSH_KEY }}
-                  TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
-              run: |
-                  # shellcheck disable=SC2029
-                  set -euo pipefail
-                  test -n "${PVE_API_TOKEN_ID}"
-                  test -n "${PROXMOX_SSH_KEY}"
-                  test -n "${TS_PROXMOX_HOSTNAME}"
-                  api_user="${PVE_API_TOKEN_ID%%!*}"
-                  key_file=$(mktemp)
-                  known_hosts_file=$(mktemp)
-                  trap 'rm -f "${key_file}" "${known_hosts_file}"' EXIT
-                  printf '%s\n' "${PROXMOX_SSH_KEY}" > "${key_file}"
-                  chmod 600 "${key_file}"
-                  bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" "${known_hosts_file}"
-                  ssh_options=(-i "${key_file}" -o BatchMode=yes -o ConnectTimeout=15 \
-                      -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${known_hosts_file}")
-                  if ! ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" true; then
-                      echo "::error::Unable to authenticate to root@${TS_PROXMOX_HOSTNAME} with the PROXMOX_SSH_KEY secret."
-                      echo "Install this public key in /root/.ssh/authorized_keys on the Proxmox host:"
-                      ssh-keygen -y -f "${key_file}"
-                      echo "Then re-run the workflow. Running ./prepare-proxmox.sh configures this automatically."
-                      exit 1
-                  fi
-                  # shellcheck disable=SC2029
-                  ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
-                      "pveum acl modify /sdn/zones/localnetwork/vmbr0 -user '${api_user}' -role homelab-terraform"
             - name: "Resolve template profile"
               id: template
               run: |
@@ -333,7 +249,7 @@ jobs:
                   PM_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
-                  TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+                  TF_VAR_vm_deploy_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
@@ -349,7 +265,7 @@ jobs:
               run: bash scripts/terraform-state.sh save
 
     ansible:
-        name: "4. Run Ansible (Docker)"
+        name: "3. Run Ansible (Docker)"
         timeout-minutes: 90
         needs: [detect-changes, terraform-apply]
         environment: prod
@@ -381,21 +297,26 @@ jobs:
             - name: "Setup SSH Agent"
               uses: webfactory/ssh-agent@v0.10.0
               with:
-                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+                  ssh-private-key: |
+                      ${{ secrets.PROXMOX_DEPLOY_SSH_KEY }}
+                      ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
             - name: "Resolve infrastructure configuration"
               id: infra
               run: |
                   set -euo pipefail
+                  echo "proxmox_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
-                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Run Ansible Playbook"
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
                   TS_PROXMOX_HOSTNAME: ${{ vars.TS_PROXMOX_HOSTNAME }}
+                  PROXMOX_DEPLOY_USER: ${{ steps.infra.outputs.proxmox_deploy_user }}
                   CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
                   CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
                   CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
+                  CLOUD_STORAGE_ROOT_PASSWORD_HASH: ${{ secrets.CLOUD_STORAGE_ROOT_PASSWORD_HASH }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
               run: |
@@ -405,18 +326,19 @@ jobs:
                   export TERRAFORM_VERSION ANSIBLE_VERSION
                   test -s ansible/inventory/proxmox.yml
                   test -f ansible/site.yml
+                  test -n "${PROXMOX_DEPLOY_USER}"
                   test -n "${CLOUD_STORAGE_DEPLOY_PATH}"
                   mkdir -p ~/.ssh
                   bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
                   ssh_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
-                  if ! ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" true; then
-                      echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_SSH_KEY is authorized for root."
+                  if ! ssh "${ssh_options[@]}" "${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}" true; then
+                      echo "::error::SSH to ${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_DEPLOY_SSH_KEY is authorized."
                       exit 1
                   fi
                   cloud_storage_known_hosts=
                   for _ in $(seq 1 60); do
                       # shellcheck disable=SC2029
-                      cloud_storage_known_hosts=$(ssh "${ssh_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
+                      cloud_storage_known_hosts=$(ssh "${ssh_options[@]}" "${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}" \
                           "ssh-keyscan -T 5 -H '${CLOUD_STORAGE_HOST_IP}' 2>/dev/null" || true)
                       if [[ -n "${cloud_storage_known_hosts}" ]]; then
                           printf '%s\n' "${cloud_storage_known_hosts}" >> ~/.ssh/known_hosts
@@ -431,7 +353,7 @@ jobs:
                   python -m pip install "ansible==${ANSIBLE_VERSION}"
                   ansible-inventory -i ansible/inventory/proxmox.yml --graph cloud_storage_hosts
                   ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml --list-hosts
-                  ansible_common_args=(--ssh-common-args="-o ProxyJump=root@${TS_PROXMOX_HOSTNAME}")
+                  ansible_common_args=(--ssh-common-args="-o ProxyJump=${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}")
                   ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
                       -a 'timeout=300' "${ansible_common_args[@]}"
                   ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m command \
@@ -440,7 +362,7 @@ jobs:
                       "${ansible_common_args[@]}" ansible/site.yml
 
     docker:
-        name: "5. Deploy Docker Workloads"
+        name: "4. Deploy Docker Workloads"
         timeout-minutes: 30
         needs: [detect-changes, ansible]
         environment: prod
@@ -474,16 +396,20 @@ jobs:
             - name: "Setup SSH Agent"
               uses: webfactory/ssh-agent@v0.10.0
               with:
-                  ssh-private-key: ${{ secrets.PROXMOX_SSH_KEY }}
+                  ssh-private-key: |
+                      ${{ secrets.PROXMOX_DEPLOY_SSH_KEY }}
+                      ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
             - name: "Resolve infrastructure configuration"
               id: infra
               run: |
                   set -euo pipefail
+                  echo "proxmox_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
-                  echo "cloud_storage_deploy_user=$(yq '.cloud_storage.deploy.user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Deploy Compose Stacks via Remote Host"
               env:
+                  PROXMOX_DEPLOY_USER: ${{ steps.infra.outputs.proxmox_deploy_user }}
                   CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
                   CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
                   CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
@@ -494,20 +420,21 @@ jobs:
                   # shellcheck disable=SC2029
                   set -euo pipefail
                   test -d docker
+                  test -n "${PROXMOX_DEPLOY_USER}"
                   test -n "${CLOUD_STORAGE_DEPLOY_USER}"
                   test -n "${CLOUD_STORAGE_HOST_IP}"
                   test -n "${CLOUD_STORAGE_DEPLOY_PATH}"
                   mkdir -p ~/.ssh
                   bash scripts/proxmox-known-hosts.sh "${TS_PROXMOX_HOSTNAME}" ~/.ssh/known_hosts
                   jump_options=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
-                  if ! ssh "${jump_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" true; then
-                      echo "::error::SSH to root@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_SSH_KEY is authorized for root."
+                  if ! ssh "${jump_options[@]}" "${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}" true; then
+                      echo "::error::SSH to ${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME} failed. Verify that PROXMOX_DEPLOY_SSH_KEY is authorized."
                       exit 1
                   fi
                   cloud_storage_known_hosts=
                   for _ in $(seq 1 60); do
                       # shellcheck disable=SC2029
-                      cloud_storage_known_hosts=$(ssh "${jump_options[@]}" "root@${TS_PROXMOX_HOSTNAME}" \
+                      cloud_storage_known_hosts=$(ssh "${jump_options[@]}" "${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}" \
                           "ssh-keyscan -T 5 -H '${CLOUD_STORAGE_HOST_IP}' 2>/dev/null" || true)
                       if [[ -n "${cloud_storage_known_hosts}" ]]; then
                           printf '%s\n' "${cloud_storage_known_hosts}" >> ~/.ssh/known_hosts
@@ -519,7 +446,7 @@ jobs:
                       echo "::error::Unable to retrieve SSH host keys for the Cloud Storage VM at ${CLOUD_STORAGE_HOST_IP}."
                       exit 1
                   fi
-                  ssh_options=(-o "ProxyJump=root@${TS_PROXMOX_HOSTNAME}" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+                  ssh_options=(-o "ProxyJump=${PROXMOX_DEPLOY_USER}@${TS_PROXMOX_HOSTNAME}" -o BatchMode=yes -o StrictHostKeyChecking=yes)
                   # shellcheck disable=SC2029
                   ssh "${ssh_options[@]}" "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}" "mkdir -p '${CLOUD_STORAGE_DEPLOY_PATH}'"
                   rsync -az --delete -e "ssh ${ssh_options[*]}" docker/ "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}:${CLOUD_STORAGE_DEPLOY_PATH}/"

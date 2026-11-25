@@ -20,3 +20,7 @@ for directory in "${source_directories[@]}"; do
 done
 
 test -f config/infra.yaml
+
+if ! compgen -G "config/ssh/admin/*.pub" >/dev/null; then
+	echo "Warning: no administrator public keys found in config/ssh/admin." >&2
+fi

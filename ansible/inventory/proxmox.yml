@@ -3,10 +3,10 @@ all:
     cloud_storage_hosts:
       hosts:
         cloud_storage_vm:
-          ansible_host: "{{ cloud_storage.network.ip }}"
-          ansible_user: "{{ cloud_storage.deploy.user }}"
+          ansible_host: "{{ lookup('env', 'CLOUD_STORAGE_HOST_IP') }}"
+          ansible_user: "{{ lookup('env', 'CLOUD_STORAGE_DEPLOY_USER') }}"
     proxmox_hosts:
       hosts:
         proxmox:
-          ansible_host: "{{ proxmox.node }}"
-          ansible_user: root
+          ansible_host: "{{ lookup('env', 'TS_PROXMOX_HOSTNAME') }}"
+          ansible_user: "{{ lookup('env', 'PROXMOX_DEPLOY_USER') }}"

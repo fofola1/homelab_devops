@@ -1,37 +1,4 @@
 ---
-- name: Configure the Proxmox host
-  hosts: proxmox_hosts
-  become: true
-  gather_facts: true
-
-  vars_files:
-    - ../config/infra.yaml
-
-  vars:
-    zfs_pool_name: tank
-
-  tasks:
-    - name: Verify the ZFS pool configuration
-      ansible.builtin.assert:
-        that:
-          - proxmox.zfs.drives | length > 0
-          - proxmox.zfs.raid_level | length > 0
-        fail_msg: >-
-          The ZFS pool must be configured in config/infra.yaml with a list of
-          whole disk devices and a RAID level.
-
-    - name: Check ZFS pool status
-      ansible.builtin.command: zpool status {{ zfs_pool_name }}
-      register: zfs_pool_status
-      changed_when: false
-      failed_when: false
-
-    - name: Create ZFS pool
-      ansible.builtin.command: >-
-        zpool create -f {{ zfs_pool_name }} {{ proxmox.zfs.raid_level }} {{ proxmox.zfs.drives | join(' ') }}
-      when: zfs_pool_status.rc != 0
-      changed_when: true
-
 - name: Configure the Cloud Storage VM
   hosts: cloud_storage_hosts
   become: true
@@ -50,7 +17,13 @@
         that:
           - cloud_storage.deploy.path | length > 0
           - cloud_storage.network.gateway | length > 0
-        fail_msg: "The deployment path and network gateway must be set in config/infra.yaml."
+          - access.admin_user | length > 0
+          - access.deploy_user | length > 0
+          - query('fileglob', playbook_dir + '/../' + access.admin_authorized_keys_dir + '/*.pub') | length > 0
+        fail_msg: >-
+          The deployment path, network gateway, access users, and at least one
+          administrator public key must be configured in config/infra.yaml and
+          config/ssh/admin/.
 
   tasks:
     - name: Inspect the VM network configuration
@@ -92,6 +65,7 @@
           - curl
           - python3
           - rsync
+          - sudo
         state: present
 
     - name: Install Docker Engine and Compose
@@ -108,9 +82,61 @@
         state: started
         enabled: true
 
+    - name: Create the administrator user
+      ansible.builtin.user:
+        name: "{{ access.admin_user }}"
+        groups: wheel
+        append: true
+        create_home: true
+        shell: /bin/ash
+        state: present
+
+    - name: Collect the administrator authorized keys
+      ansible.builtin.set_fact:
+        admin_authorized_keys: "{{ admin_authorized_keys | default([]) + [lookup('file', item)] }}"
+      loop: "{{ query('fileglob', playbook_dir + '/../' + access.admin_authorized_keys_dir + '/*.pub') }}"
+
+    - name: Install the administrator authorized keys
+      ansible.posix.authorized_key:
+        user: "{{ access.admin_user }}"
+        exclusive: true
+        key: "{{ admin_authorized_keys | join('\n') }}"
+
+    - name: Allow the administrator user to use sudo
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/admin
+        mode: "0440"
+        content: "{{ access.admin_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Check for the image default user
+      ansible.builtin.command: id alpine
+      register: alpine_user
+      changed_when: false
+      failed_when: false
+
+    - name: Lock the image default user
+      ansible.builtin.user:
+        name: alpine
+        password_lock: true
+      when: alpine_user.rc == 0
+
+    - name: Remove the image default user SSH keys
+      ansible.builtin.file:
+        path: /home/alpine/.ssh/authorized_keys
+        state: absent
+      when: alpine_user.rc == 0
+
+    - name: Allow the deployment user to use sudo for provisioning
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/deploy
+        mode: "0440"
+        content: "{{ access.deploy_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        validate: /usr/sbin/visudo -cf %s
+
     - name: Add the deployment user to the Docker group
       ansible.builtin.user:
-        name: "{{ ansible_user }}"
+        name: "{{ access.deploy_user }}"
         groups: docker
         append: true
 
@@ -118,7 +144,7 @@
       ansible.builtin.meta: reset_connection
 
     - name: Verify the deployment user is in the Docker group
-      ansible.builtin.command: id -nG {{ ansible_user }}
+      ansible.builtin.command: id -nG {{ access.deploy_user }}
       register: deployment_user_groups
       changed_when: false
       failed_when: "'docker' not in deployment_user_groups.stdout.split()"
@@ -127,8 +153,8 @@
       ansible.builtin.file:
         path: "{{ cloud_storage.deploy.path }}"
         state: directory
-        owner: "{{ cloud_storage.deploy.user }}"
-        group: "{{ cloud_storage.deploy.user }}"
+        owner: "{{ access.deploy_user }}"
+        group: "{{ access.deploy_user }}"
         mode: "0755"
 
     - name: Ensure the virtiofs kernel module is loaded
@@ -167,6 +193,44 @@
         fstype: virtiofs
         state: mounted
 
+    - name: Create the SSH configuration directory
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Configure SSH access
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-onprem.conf
+        mode: "0644"
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+          AuthenticationMethods publickey
+          AllowUsers {{ access.admin_user }} {{ access.deploy_user }}
+      notify: Reload sshd
+
+    - name: Ensure the SSH include directory is enabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        line: "Include /etc/ssh/sshd_config.d/*.conf"
+        insertbefore: BOF
+      notify: Reload sshd
+
+    - name: Validate the SSH configuration
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Set the root console password
+      ansible.builtin.user:
+        name: root
+        password: "{{ lookup('env', 'CLOUD_STORAGE_ROOT_PASSWORD_HASH') }}"
+      when: lookup('env', 'CLOUD_STORAGE_ROOT_PASSWORD_HASH') | length > 0
+
     - name: Verify Docker installation
       ansible.builtin.command: docker version
       changed_when: false
@@ -174,3 +238,9 @@
     - name: Verify Docker Compose installation
       ansible.builtin.command: docker compose version
       changed_when: false
+
+  handlers:
+    - name: Reload sshd
+      ansible.builtin.service:
+        name: sshd
+        state: reloaded
