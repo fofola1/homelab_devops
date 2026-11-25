@@ -15,7 +15,7 @@ access:
   deploy_user: "deployer"
   # Proxmox API user (without @pve) for deployment, used by the setup script and
   # the Terraform provider. Put the real value here before running the setup.
-  deploy_api_user: ""
+  deploy_api_user: "deployer"
 
 proxmox:
   node: "nas"
