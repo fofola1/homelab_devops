@@ -1,4 +1,4 @@
-# Committed infrastructure configuration for the Proxmox onprem.
+# Committed infrastructure configuration for the Proxmox infora.
 #
 # Values that describe the physical setup (Proxmox node, ZFS pool, Cloud Storage
 # VM addressing) live here so they can be committed. GitHub repository variables
@@ -8,11 +8,14 @@
 access:
   # Admin account. Created on the Proxmox host and on every VM, with sudo.
   # Add one or more public keys to the directory below before running setup.
-  admin_user: "fofola"
+  admin_user: "admin"
   admin_authorized_keys_dir: "config/ssh/admin"
   # Automation account. Created on the Proxmox host without sudo and on the VM
   # with the privileges needed to deploy. One key per target, stored in GitHub.
   deploy_user: "deployer"
+  # Proxmox API user (without @pve) for deployment, used by the setup script and
+  # the Terraform provider. Put the real value here before running the setup.
+  deploy_api_user: ""
 
 proxmox:
   node: "nas"
