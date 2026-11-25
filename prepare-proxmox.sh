@@ -23,15 +23,6 @@ prompt_required() {
 	done
 }
 
-prompt_with_default() {
-	local prompt=$1
-	local default=$2
-	local value
-
-	read -r -p "${prompt} [${default}]: " value || die "Input ended before setup was complete."
-	printf '%s' "${value:-${default}}"
-}
-
 validate_username() {
 	local user=$1
 	local label=$2
@@ -223,8 +214,6 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 infra_config_file=${script_directory}/config/infra.yaml
 [[ -f "${infra_config_file}" ]] || die "Infrastructure configuration file not found: ${infra_config_file}"
 
-admin_user_default=$(read_config_value admin_user admin)
-deploy_user_default=$(read_config_value deploy_user deployer)
 admin_keys_dir_relative=$(read_config_value admin_authorized_keys_dir config/ssh/admin)
 zfs_raid_level=$(read_config_value raid_level raidz1)
 vm_ip=$(read_config_value ip "")
@@ -244,14 +233,17 @@ connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, o
 parse_connection "${connection}"
 refresh_ssh_host_key
 
-pve_api_user=$(prompt_required "Proxmox API username (without @pve) for deployment")
+pve_api_user=$(read_config_value deploy_api_user "")
+[[ -n "${pve_api_user}" ]] || die "Set access.deploy_api_user in ${infra_config_file} before running the setup."
 [[ "${pve_api_user}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || \
 	die "Proxmox API username must be a valid user name."
 [[ "${pve_api_user}" != root ]] || die "Do not use the root API account."
 
-admin_user=$(prompt_with_default "Administrator username" "${admin_user_default}")
+admin_user=$(read_config_value admin_user "")
+deploy_user=$(read_config_value deploy_user "")
+[[ -n "${admin_user}" ]] || die "Set access.admin_user in ${infra_config_file} before running the setup."
+[[ -n "${deploy_user}" ]] || die "Set access.deploy_user in ${infra_config_file} before running the setup."
 validate_username "${admin_user}" "Administrator user"
-deploy_user=$(prompt_with_default "Deployment username" "${deploy_user_default}")
 validate_username "${deploy_user}" "Deployment user"
 [[ "${admin_user}" != "${deploy_user}" ]] || \
 	die "The administrator and deployment users must be different."
