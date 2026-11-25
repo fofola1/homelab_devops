@@ -39,7 +39,7 @@ locals {
   vm_ipv4_address    = local.cfg.cloud_storage.network.ip
   vm_ipv4_cidr       = local.cfg.cloud_storage.network.cidr
   vm_ipv4_gateway    = local.cfg.cloud_storage.network.gateway
-  docker_user        = local.cfg.cloud_storage.deploy.user
+  deploy_user        = local.cfg.access.deploy_user
 }
 
 resource "proxmox_virtual_environment_vm" "template" {
@@ -121,8 +121,8 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
     }
 
     user_account {
-      username = local.docker_user
-      keys     = [var.ssh_public_key]
+      username = local.deploy_user
+      keys     = [var.vm_deploy_ssh_public_key]
     }
   }
 }

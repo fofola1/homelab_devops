@@ -9,8 +9,11 @@
 # Set these here or export them in your shell (exported values are used when empty).
 TS_OAUTH_CLIENT_ID=
 TS_OAUTH_SECRET=
-# Required: local private-key path, or "generate" to create a temporary Ed25519 key automatically.
-GITHUB_PROXMOX_SSH_KEY_PATH=generate
+# Required: local private-key paths, or "generate" to create temporary Ed25519 keys.
+# The host key is authorized for the deployment user on Proxmox; the VM key is
+# injected into the Cloud Storage VM by Terraform.
+GITHUB_PROXMOX_DEPLOY_KEY_PATH=generate
+GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=generate
 
 # Optional: S3 backend (for example Cloudflare R2) that stores the Terraform state.
 # Leave blank to keep the default Git-only state storage on the terraform-state branch.

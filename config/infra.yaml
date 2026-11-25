@@ -1,9 +1,18 @@
-# Committed infrastructure configuration for the Proxmox homelab.
+# Committed infrastructure configuration for the Proxmox onprem.
 #
 # Values that describe the physical setup (Proxmox node, ZFS pool, Cloud Storage
 # VM addressing) live here so they can be committed. GitHub repository variables
 # and secrets only keep deployment credentials and workflow-specific values that
 # must not be committed.
+
+access:
+  # Admin account. Created on the Proxmox host and on every VM, with sudo.
+  # Add one or more public keys to the directory below before running setup.
+  admin_user: "fofola"
+  admin_authorized_keys_dir: "config/ssh/admin"
+  # Automation account. Created on the Proxmox host without sudo and on the VM
+  # with the privileges needed to deploy. One key per target, stored in GitHub.
+  deploy_user: "deployer"
 
 proxmox:
   node: "nas"
@@ -24,5 +33,4 @@ cloud_storage:
     cidr: 24
     gateway: "10.10.10.1"
   deploy:
-    user: "alpine"
     path: "/opt/docker"

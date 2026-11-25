@@ -48,6 +48,6 @@ variable "vm_network_bridge" {
   default = "vmbr0"
 }
 
-variable "ssh_public_key" {
+variable "vm_deploy_ssh_public_key" {
   type = string
 }

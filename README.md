@@ -1,4 +1,4 @@
-# Homelab DevOps Stack
+# onprem DevOps Stack
 
 Terraform provisions a cloud image template and a cloud storage VM on Proxmox, Ansible installs Docker Engine on the VM, and GitHub Actions deploys the compose stack in `docker/`. The stack currently runs Immich for the photo library and FileBrowser Quantum as the file manager; add your own services to `docker/compose.yml`.
 
@@ -8,9 +8,9 @@ Terraform provisions a cloud image template and a cloud storage VM on Proxmox, A
 | --- | --- |
 | `.github/workflows/` | CI validation and the CD deployment pipeline. |
 | `terraform/` | Proxmox provider, template profile, VM definition. |
-| `ansible/` | Playbooks and inventory that configure the Proxmox host and the Cloud Storage VM. |
+| `ansible/` | Playbook and inventory that configure the Cloud Storage VM. |
 | `docker/` | Compose stack that is copied to the VM. |
-| `config/` | Committed infrastructure configuration (Proxmox node, ZFS pool, Cloud Storage VM). |
+| `config/` | Committed infrastructure configuration and administrator public keys (Proxmox node, ZFS pool, Cloud Storage VM, access accounts). |
 | `scripts/` | Terraform-state, known-hosts, and Proxmox setup helpers. |
 | `docs/deployment.md` | Setup, state, networking, and troubleshooting details. |
 | `report-proxmox-state.conf.example` | Template for the local setup configuration. |
@@ -20,34 +20,52 @@ Terraform provisions a cloud image template and a cloud storage VM on Proxmox, A
 - **CI - Validate** runs on pushes and pull requests to `main` and `dev` and checks Terraform formatting/validation, Ansible lint, compose file validity, the repository layout, and shell scripts with shellcheck.
 - **CD - Deploy to Proxmox** runs on pushes to `main` or manually with `workflow_dispatch`. The `force_deploy` input deploys every stage even when change detection finds nothing. The default development branch is `dev`, so day-to-day deployments are started manually from it.
 
-The CD pipeline detects changes and then runs five deployment stages: Ansible host, Terraform plan, Terraform apply, Ansible, and the compose deployment. Each deployment stage joins the Tailscale network with the tagged runner identity. The Proxmox node is used as an SSH jump host for the Cloud Storage VM, so the VM never needs to be reachable from the public internet.
+The CD pipeline detects changes and then runs four deployment stages: Terraform plan, Terraform apply, Ansible, and the compose deployment. Each deployment stage joins the Tailscale network with the tagged runner identity. The Proxmox node is used as an SSH jump host for the Cloud Storage VM, so the VM never needs to be reachable from the public internet.
+
+## Access model
+
+SSH access is key-only and split by role. Root is reserved for console access.
+
+| Account | Where | Access |
+| --- | --- | --- |
+| `root` | Proxmox host and VMs | Console/noVNC only; SSH root login is disabled. Keep the password offline. |
+| `fofola` (from `access.admin_user`) | Proxmox host and VMs | Human administrator. Multiple public keys from `config/ssh/admin/`, full sudo. |
+| `deployer` (from `access.deploy_user`) | Proxmox host | Automation. One key from `PROXMOX_DEPLOY_SSH_KEY`, no sudo, TCP forwarding to the VM only. |
+| `deployer` (from `access.deploy_user`) | Cloud Storage VM | Automation. One key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`, passwordless sudo and Docker group for provisioning. |
+
+Administrator public keys are committed because they are not secrets. Private keys stay on your machines. The two automation keys are separate, so rotating one never affects the other or your own access.
 
 ## ZFS pool
 
-The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
+The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
 
-The stage runs when change detection marks the `ansible/`, `terraform/`, or `config/` paths, or when `force_deploy` is enabled. Terraform then plans the Cloud Storage VM disk on the new pool.
+When you answer yes to the dedicated-data question, the script lists the whole disks on the Proxmox host over SSH, lets you pick the disks, writes the selection into `config/infra.yaml`, and creates the pool. Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
 
-The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection into `config/infra.yaml`.
+Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives. No Ansible or CD step does this; the setup script is the only place that touches the pool.
 
-The pool creation is idempotent: the Ansible play checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
+CI no longer creates the pool. If the pool is missing later, rerun `./prepare-proxmox.sh` from a machine that can reach the host.
 
 ## First-time setup
 
-Prerequisites: a Proxmox host reachable over SSH, an authenticated `gh` CLI, and a Tailscale OAuth client that can create `tag:proxmox-ci` nodes.
+Prerequisites: a Proxmox host reachable over SSH as root (password or existing key), an authenticated `gh` CLI, at least one administrator public key in `config/ssh/admin/`, and a Tailscale OAuth client that can create `tag:proxmox-ci` nodes.
 
 ```bash
 cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The setup script configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the remaining repository variables and secrets with `gh`. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
+The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It verifies the deployment login and then disables root SSH and password authentication. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
 
 ## Configuration
 
-The Proxmox node, ZFS pool, and Cloud Storage VM settings live in the committed [`config/infra.yaml`](config/infra.yaml):
+The Proxmox node, ZFS pool, Cloud Storage VM, and access accounts live in the committed [`config/infra.yaml`](config/infra.yaml):
 
 ```yaml
+access:
+  admin_user: "fofola"
+  admin_authorized_keys_dir: "config/ssh/admin"
+  deploy_user: "deployer"
+
 proxmox:
   node: "nas"
   zfs:
@@ -66,7 +84,6 @@ cloud_storage:
     cidr: 24
     gateway: "10.10.10.1"
   deploy:
-    user: "alpine"
     path: "/opt/docker"
 ```
 
@@ -80,7 +97,9 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
 | `TERRAFORM_STATE_TO_GIT` | Whether to mirror the Terraform state to the `terraform-state` branch; default `true`. |
 
-It also creates the secrets `PROXMOX_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`.
+It also creates the secrets `PROXMOX_DEPLOY_SSH_KEY`, `CLOUD_STORAGE_DEPLOY_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`. The optional `CLOUD_STORAGE_ROOT_PASSWORD_HASH` secret sets the VM root password for console break-glass.
+
+The administrator public keys are committed under `config/ssh/admin/` (one or more `*.pub` files). They are public by design; private keys must never be committed.
 
 When the optional S3 state backend is configured, it also creates the repository variable `TF_STATE_S3_URL`, the repository variable `TF_STATE_S3_NAME`, the secret `TF_STATE_S3_KEY_ID`, and the secret `TF_STATE_S3_KEY_SECRET`. The S3 values are requested by `./prepare-proxmox.sh` when the optional S3 setup is accepted.
 
@@ -103,7 +122,7 @@ The Alpine image is not stored in the Git repository. A cloud image is a large b
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml` and runs as the `alpine` user created by the cloud-init user account. Ansible installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml` and runs the deployment account from `access.deploy_user`, created by the cloud-init user account with the VM deployment key. Ansible creates the `access.admin_user` account with the committed administrator keys, disables root and password SSH, and installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
@@ -111,6 +130,12 @@ The cloud storage VM is named `cloud-storage` and runs on the template selected 
 The compose stack in `docker/compose.yml` starts Immich (port `2283`) and FileBrowser Quantum (port `8080`), both reading from those mounts.
 
 When other VMs access the same pool through virtiofs later, keep an eye on file ownership: the same pool mounted from multiple VMs can end up with conflicting UIDs and cause permission errors.
+
+## Rotating SSH keys
+
+- **Administrator:** add a new `.pub` file to `config/ssh/admin/`, rerun `./prepare-proxmox.sh` to install it on the host, and rerun the Ansible stage to install it on the VM. Verify the new login, then remove the old file. Multiple keys are supported and the playbook keeps the VM authorized keys in sync with the directory.
+- **Deployment:** generate a new key, authorize it for the deployment user, update the matching GitHub secret (`PROXMOX_DEPLOY_SSH_KEY` or `CLOUD_STORAGE_DEPLOY_SSH_KEY`), and remove the old key. The two targets are independent, so rotating one never locks you out of the other.
+- **Recovery:** root SSH is disabled. Use the Proxmox console/noVNC with the root password, or the administrator account, to restore access.
 
 ## Terraform state
 
@@ -134,6 +159,8 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 ## Troubleshooting
 
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
+- **Cannot SSH to the Proxmox host:** use the administrator account and the committed keys. Root SSH is intentionally disabled; use the console/noVNC with the root password for break-glass access.
+- **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`, not `alpine`.
 - **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.
 

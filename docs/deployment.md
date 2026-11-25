@@ -1,22 +1,23 @@
 # Deployment
 
-The deployment pipeline is defined in `.github/workflows/deploy.yml` and has five stages:
+The deployment pipeline is defined in `.github/workflows/deploy.yml` and has four stages:
 
-1. **Run Ansible (Host)** prepares the Proxmox host storage before Terraform runs.
-2. **Terraform Plan** validates the Terraform configuration against the current state.
-3. **Terraform Apply** restores the state, refreshes the Proxmox SDN ACL, applies the plan and saves the state.
-4. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
-5. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
+1. **Terraform Plan** validates the Terraform configuration against the current state.
+2. **Terraform Apply** restores the state, applies the plan and saves the state.
+3. **Run Ansible (Cloud Storage)** installs Docker Engine on the new VM, creates the administrator account, loads the virtiofs kernel module, and prepares the shared storage mounts and the deployment directory.
+4. **Deploy Cloud Storage Workloads** copies `docker/` to the VM and runs `docker compose up`.
 
 The Terraform stages resolve the template profile selected by the `cloud_storage.template` value in `config/infra.yaml` from `terraform/templates/` before planning and uploading the cloud image; the image URL, file name, checksum, and checksum algorithm therefore live only in the profile file.
 
 ## ZFS pool (host storage)
 
-The **Run Ansible (Host)** stage runs before Terraform and creates the ZFS pool on the Proxmox host. The pool name is fixed by the playbook (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
+The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
 
-The stage runs when change detection marks the `ansible/`, `terraform/`, or `config/` paths, or when `force_deploy` is enabled. Terraform then plans the Cloud Storage VM disk on the new pool.
+When you answer yes to the dedicated-data question, the script lists the whole disks on the Proxmox host over SSH, lets you pick the disks, writes the selection into `config/infra.yaml`, and creates the pool. Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
 
-The interactive setup (`prepare-proxmox.sh`) asks whether to set up a dedicated drive for application data (photos, media, ...). When answered yes, it lists the whole disks on the Proxmox host over SSH, lets the user pick the disks, and writes the selection into `config/infra.yaml`.
+Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives.
+
+CI no longer creates the pool. If the pool is missing later, rerun `./prepare-proxmox.sh` from a machine that can reach the host.
 
 ## First-time setup
 
@@ -27,11 +28,11 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The infrastructure configuration itself lives in the committed `config/infra.yaml`; fill it in there before the first deployment.
+Before running it, put at least one administrator public key in `config/ssh/admin/` and fill in `config/infra.yaml` (`access.admin_user`, `access.deploy_user`, and the Cloud Storage VM settings).
 
-It configures the Proxmox host, creates the API token, authorizes the deployment SSH key for `root`, and uploads the remaining repository variables and secrets with the `gh` CLI. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
+The script creates the administrator and deployment users, installs the administrator keys and the host deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with the `gh` CLI. It verifies the deployment login and then disables root SSH and password authentication. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
 
-If the deployment SSH key was created by an older version of this repository, re-run the setup (or append the public key printed by the workflow to `/root/.ssh/authorized_keys` on the Proxmox host). The workflow intentionally fails with the public key in its log when it cannot authenticate.
+The two deployment keys are independent: `PROXMOX_DEPLOY_SSH_KEY` is authorized for `access.deploy_user` on the host, and `CLOUD_STORAGE_DEPLOY_SSH_KEY` is injected into the VM by Terraform. Rotating one never affects the other.
 
 ## Terraform state
 
@@ -67,14 +68,23 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 The deployment then fails when none of the discovered keys match the pinned fingerprint.
 
+## SSH access
+
+Root SSH is disabled on the Proxmox host and on the VM. Use `access.admin_user` with the committed keys for interactive access, or the deployment account for automation. The Proxmox console/noVNC with the root password is the break-glass path.
+
+The host deployment account has no sudo; the privileged host work (ZFS pool, SDN ACL) runs during setup. The VM deployment account has passwordless sudo and the Docker group, which Ansible uses for provisioning.
+
+After the migration, delete the obsolete `PROXMOX_SSH_KEY` repository secret; the workflow now uses `PROXMOX_DEPLOY_SSH_KEY` and `CLOUD_STORAGE_DEPLOY_SSH_KEY`.
+
 ## VM networking
 
 The cloud storage VM gets a static address, so cloud-init does not learn DNS from DHCP. Terraform therefore configures the gateway from `cloud_storage.network.gateway` in `config/infra.yaml` as the VM's DNS server. The Ansible playbook also writes `/etc/resolv.conf` with the gateway plus `1.1.1.1`, bounds the Alpine package manager timeouts, and updates the cache with a bounded command. A broken DNS or egress path now fails in minutes with the actual package output instead of hanging.
 
 ## Recovering from a failed apply
 
-- **ZFS pool creation failed:** check that `proxmox.zfs.drives` in `config/infra.yaml` lists whole disk devices and that the runner could reach the Proxmox host over SSH. The Ansible host stage fails before Terraform runs, so no VM plan is attempted against a missing pool.
-- **Host key verification failed:** the workflow now refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
+- **ZFS pool creation failed:** check that `proxmox.zfs.drives` in `config/infra.yaml` lists whole disk devices and that the host was reachable during setup. The pool is created by `./prepare-proxmox.sh`; rerun it before deploying.
+- **Host key verification failed:** the workflow refreshes the host key automatically. If it still fails, verify that the `PROXMOX_KNOWN_HOSTS` secret belongs to the current host and that `TS_PROXMOX_HOSTNAME` resolves over Tailscale.
 - **`Failed to update the package cache`:** check the network diagnostics that the Ansible job prints before the package tasks. If the VM cannot reach its gateway, fix the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`; if the configured resolver does not answer, the playbook falls back to `1.1.1.1`.
-- **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL step could not run. Check the SSH key authorization message and re-run `./prepare-proxmox.sh`.
+- **Permission check failed (`/sdn/zones/localnetwork/vmbr0`, `SDN.Use`):** the SDN ACL is created during setup. Re-run `./prepare-proxmox.sh` from a machine that can reach the host.
+- **Locked out of SSH:** root SSH is disabled by design. Use the Proxmox console/noVNC with the root password, or log in as `access.admin_user` with the committed keys. To restore access, reinstall a key for the administrator account from the console.
 - **VM already exists:** restore the `terraform-state` branch or import the existing VM manually before applying again.

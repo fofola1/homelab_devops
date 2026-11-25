@@ -83,6 +83,9 @@ load_config() {
 	local exported_s3_key_secret=${TF_STATE_S3_KEY_SECRET:-}
 	local exported_terraform_state_to_git=${TERRAFORM_STATE_TO_GIT:-}
 	local exported_host_key_fingerprint=${PROXMOX_HOST_KEY_FINGERPRINT:-}
+	local exported_proxmox_deploy_key=${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}
+	local exported_cloud_storage_deploy_key=${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
+	local exported_deploy_user=${PROXMOX_DEPLOY_USER:-}
 	# shellcheck disable=SC1090
 	source "${report_config_file}"
 	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
@@ -93,6 +96,12 @@ load_config() {
 	TF_STATE_S3_KEY_SECRET=${TF_STATE_S3_KEY_SECRET:-${exported_s3_key_secret}}
 	TERRAFORM_STATE_TO_GIT=${TERRAFORM_STATE_TO_GIT:-${exported_terraform_state_to_git}}
 	PROXMOX_HOST_KEY_FINGERPRINT=${PROXMOX_HOST_KEY_FINGERPRINT:-${exported_host_key_fingerprint}}
+	GITHUB_PROXMOX_DEPLOY_KEY_PATH=${exported_proxmox_deploy_key:-${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}}
+	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=${exported_cloud_storage_deploy_key:-${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}}
+	PROXMOX_DEPLOY_USER=${exported_deploy_user:-${PROXMOX_DEPLOY_USER:-}}
+	if [[ -z "${PROXMOX_DEPLOY_USER}" ]]; then
+		PROXMOX_DEPLOY_USER=$(sed -n 's/^[[:space:]]*deploy_user:[[:space:]]*"\([^"]*\)".*$/\1/p' "${infra_config_file}" | head -n 1)
+	fi
 	TS_PROXMOX_HOSTNAME=${values[TS_PROXMOX_HOSTNAME]:-}
 	PROXMOX_NODE=${values[PROXMOX_NODE]:-}
 }
@@ -106,7 +115,9 @@ printf '%-32s %s\n' \
 	PROXMOX_HOST_KEY_FINGERPRINT "${PROXMOX_HOST_KEY_FINGERPRINT:-}" \
 	TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
 	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
-	GITHUB_PROXMOX_SSH_KEY_PATH "${GITHUB_PROXMOX_SSH_KEY_PATH:-}" \
+	PROXMOX_DEPLOY_USER "${PROXMOX_DEPLOY_USER:-}" \
+	GITHUB_PROXMOX_DEPLOY_KEY_PATH "${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}" \
+	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH "${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}" \
 	PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
 	PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}" \
 	TF_STATE_S3_URL "${TF_STATE_S3_URL:-}" \
@@ -127,23 +138,13 @@ load_config
 for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
 	[[ -n "${!name}" ]] || { echo "Unable to discover ${name} from the Proxmox host." >&2; exit 1; }
 done
-for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET GITHUB_PROXMOX_SSH_KEY_PATH \
+for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET PROXMOX_DEPLOY_USER \
+	GITHUB_PROXMOX_DEPLOY_KEY_PATH GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH \
 	PVE_API_TOKEN_ID PVE_API_TOKEN_SECRET; do
 	[[ -n "${!name:-}" ]] || { echo "${name} is required for deployment." >&2; exit 1; }
 done
-github_proxmox_ssh_key_file=${GITHUB_PROXMOX_SSH_KEY_PATH}
+
 temporary_ssh_key_directory=
-if [[ "${GITHUB_PROXMOX_SSH_KEY_PATH}" == generate ]]; then
-	temporary_ssh_key_directory=$(mktemp --directory)
-	github_proxmox_ssh_key_file=${temporary_ssh_key_directory}/id_ed25519
-	ssh-keygen -q -t ed25519 -N '' -f "${github_proxmox_ssh_key_file}" || {
-		rm -rf "${temporary_ssh_key_directory}"
-		exit 1
-	}
-elif [[ ! -f "${GITHUB_PROXMOX_SSH_KEY_PATH}" ]]; then
-	echo "SSH key file not found: ${GITHUB_PROXMOX_SSH_KEY_PATH}" >&2
-	exit 1
-fi
 cleanup_temporary_ssh_key() {
 	if [[ -n "${temporary_ssh_key_directory}" ]]; then
 		rm -rf "${temporary_ssh_key_directory}"
@@ -151,27 +152,42 @@ cleanup_temporary_ssh_key() {
 }
 trap cleanup_temporary_ssh_key EXIT
 
-github_proxmox_public_key=$(ssh-keygen -y -f "${github_proxmox_ssh_key_file}")
-# shellcheck disable=SC2029
-ssh "${ssh_options[@]}" "${ssh_target}" \
-	"bash -s -- $(printf '%q' "${github_proxmox_public_key}")" <<'EOF'
-set -euo pipefail
-public_key=$1
-install -d -m 0700 /root/.ssh
-touch /root/.ssh/authorized_keys
-chmod 0600 /root/.ssh/authorized_keys
-if ! grep -qxF -- "${public_key}" /root/.ssh/authorized_keys; then
-	printf '%s\n' "${public_key}" >> /root/.ssh/authorized_keys
-fi
-EOF
-if ! ssh "${ssh_options[@]}" -i "${github_proxmox_ssh_key_file}" -o IdentitiesOnly=yes \
+prepare_deploy_key_file() {
+	local requested_path=$1
+	local default_name=$2
+	local key_file=${requested_path}
+
+	if [[ "${key_file}" == generate ]]; then
+		if [[ -z "${temporary_ssh_key_directory}" ]]; then
+			temporary_ssh_key_directory=$(mktemp --directory)
+		fi
+		key_file=${temporary_ssh_key_directory}/${default_name}
+		ssh-keygen -q -t ed25519 -N '' -C "onprem ${default_name}" -f "${key_file}" || {
+			rm -rf "${temporary_ssh_key_directory}"
+			exit 1
+		}
+	elif [[ ! -f "${key_file}" ]]; then
+		echo "SSH key file not found: ${key_file}" >&2
+		exit 1
+	fi
+
+	key_file=$(cd -- "$(dirname -- "${key_file}")" && pwd)/$(basename -- "${key_file}")
+	printf '%s' "${key_file}"
+}
+
+proxmox_deploy_key_file=$(prepare_deploy_key_file "${GITHUB_PROXMOX_DEPLOY_KEY_PATH}" "proxmox_deploy")
+cloud_storage_deploy_key_file=$(prepare_deploy_key_file "${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH}" "cloud_storage_deploy")
+
+ssh_host_only=${ssh_target#*@}
+if ! ssh "${ssh_options[@]}" -i "${proxmox_deploy_key_file}" -o IdentitiesOnly=yes \
 	-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	"${ssh_target}" true; then
-	echo "Unable to authenticate to ${ssh_target} with the deployment key." >&2
-	echo "Ensure the Proxmox host allows root SSH access with keys (PermitRootLogin prohibit-password)." >&2
+	-o "User=${PROXMOX_DEPLOY_USER}" "${ssh_host_only}" true; then
+	echo "Unable to authenticate to ${PROXMOX_DEPLOY_USER}@${ssh_host_only} with the deployment key." >&2
+	echo "Ensure ${PROXMOX_DEPLOY_USER} exists and the key is authorized." >&2
+	echo "Running ./prepare-proxmox.sh configures this automatically." >&2
 	exit 1
 fi
-echo "Authorized the deployment key for root on ${ssh_target}."
+echo "Verified the deployment key for ${PROXMOX_DEPLOY_USER} on ${ssh_host_only}."
 
 storage_query_command="pvesh get /storage/${cloud_storage_image_datastore} --output-format json"
 # shellcheck disable=SC2029
@@ -188,7 +204,7 @@ if [[ ",${image_content}," != *,import,* ]]; then
 		"${storage_content_command}"
 fi
 
-read -r -p "GitHub repository (e.g. fofola1/homelab_devops or https://github.com/fofola1/homelab_devops): " repository_input
+read -r -p "GitHub repository (e.g. fofola1/onprem_devops or https://github.com/fofola1/onprem_devops): " repository_input
 [[ -n "${repository_input}" ]] || { echo "Repository is required." >&2; exit 1; }
 repository=${repository_input#https://github.com/}
 repository=${repository#http://github.com/}
@@ -208,7 +224,8 @@ if [[ -n "${PROXMOX_HOST_KEY_FINGERPRINT:-}" ]]; then
 fi
 gh secret set TS_OAUTH_CLIENT_ID --repo "${repository}" --app actions --body "${TS_OAUTH_CLIENT_ID}"
 gh secret set TS_OAUTH_SECRET --repo "${repository}" --app actions --body "${TS_OAUTH_SECRET}"
-gh secret set PROXMOX_SSH_KEY --repo "${repository}" --app actions < "${github_proxmox_ssh_key_file}"
+gh secret set PROXMOX_DEPLOY_SSH_KEY --repo "${repository}" --app actions < "${proxmox_deploy_key_file}"
+gh secret set CLOUD_STORAGE_DEPLOY_SSH_KEY --repo "${repository}" --app actions < "${cloud_storage_deploy_key_file}"
 gh secret set PVE_API_TOKEN_ID --repo "${repository}" --app actions --body "${PVE_API_TOKEN_ID}"
 gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "${PVE_API_TOKEN_SECRET}"
 gh secret set PVE_API_TOKEN --repo "${repository}" --app actions \
