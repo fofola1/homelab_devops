@@ -147,7 +147,7 @@ State is stored in the S3 backend configured in `terraform/main.tf` (Cloudflare 
 
 The state is mirrored to the dedicated `terraform-state` git branch as well; uploading to that branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable. Do not delete the branch: Terraform would no longer know about the existing template and VM, and the next apply would try to create them again.
 
-The state contains only infrastructure attributes and the cloud-init public key, not the Proxmox API token or any S3 credential. Plan files are not uploaded as artifacts because this repository is public and plans contain sensitive values; the apply job regenerates the plan locally.
+The state contains only infrastructure attributes, the cloud-init public key, and a masked placeholder for the bootstrap password derived from `CLOUD_STORAGE_DEPLOY_SSH_KEY` — not the Proxmox API token, the password itself, or any S3 credential. Plan files are not uploaded as artifacts because this repository is public and plans contain sensitive values; the apply job regenerates the plan locally.
 
 ## Local validation
 
@@ -164,7 +164,7 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
 - **Cannot SSH to the Proxmox host:** use the administrator account and the committed keys. Root SSH is intentionally disabled; use the console/noVNC with the root password for break-glass access.
-- **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`, not `alpine`.
+- **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`, not `alpine`. On the Alpine image, an account cloud-init creates without a password is locked and PAM-backed sshd refuses keys; Terraform sets a bootstrap password derived from the deployment key so Ansible can connect and harden sshd.
 - **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.
 

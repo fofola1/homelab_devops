@@ -36,7 +36,7 @@ Before running it, put at least one administrator public key in `config/ssh/admi
 
 The script creates the administrator and deployment users, installs the administrator keys and the host deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with the `gh` CLI. It verifies the deployment login and then disables root SSH and password authentication. The root password is requested once; the SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
 
-The two deployment keys are independent: `PROXMOX_DEPLOY_SSH_KEY` is authorized for `access.deploy_user` on the host, and `CLOUD_STORAGE_DEPLOY_SSH_KEY` is injected into the VM by Terraform. Rotating one never affects the other.
+The two deployment keys are independent: `PROXMOX_DEPLOY_SSH_KEY` is authorized for `access.deploy_user` on the host, and `CLOUD_STORAGE_DEPLOY_SSH_KEY` is injected into the VM by Terraform. Rotating one never affects the other. Terraform also derives a bootstrap password from the VM key: Alpine's cloud-init leaves a new user locked when no password is supplied, and its PAM-backed sshd then rejects public-key auth. Ansible disables password auth once it takes over.
 
 ## Terraform state
 
@@ -44,7 +44,7 @@ State is stored in the S3 backend configured in `terraform/main.tf`, which point
 
 The state is mirrored to the dedicated `terraform-state` git branch as well; uploading to that branch can be disabled with the `TERRAFORM_STATE_TO_GIT` repository variable. Do not delete the branch: Terraform would no longer know about the existing template and VM and the next apply would try to create them again.
 
-The state contains only infrastructure attributes (VM configuration and the cloud-init public key). It does not contain the Proxmox API token or any S3 credential.
+The state contains only infrastructure attributes (VM configuration and the cloud-init public key), plus a masked placeholder for the bootstrap password derived from the VM deployment key. It does not contain the Proxmox API token, the password itself, or any S3 credential.
 
 The plan file is intentionally not uploaded as a workflow artifact. This repository is public and Terraform plan files contain sensitive variable values, so the apply job regenerates the plan locally.
 
