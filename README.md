@@ -165,6 +165,7 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
 - **Cannot SSH to the Proxmox host:** use the administrator account and the committed keys. Root SSH is intentionally disabled; use the console/noVNC with the root password for break-glass access.
 - **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`, not `alpine`. On the Alpine image, an account cloud-init creates without a password is locked and PAM-backed sshd refuses keys; Terraform sets a bootstrap password derived from the deployment key so Ansible can connect and harden sshd.
+- **Cloud-init reports `status: error`:** the CD pipeline waits for cloud-init but reports its status instead of failing; Ansible fixes DNS and packages itself and prints the detailed status. Check that output and verify `cloud_storage.network.gateway` in `config/infra.yaml` if packages still fail.
 - **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.
 

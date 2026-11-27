@@ -365,7 +365,9 @@ jobs:
                   ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m wait_for_connection \
                       -a 'timeout=300' "${ansible_common_args[@]}"
                   ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m command \
-                      -a 'cloud-init status --wait' "${ansible_common_args[@]}"
+                      -a 'cloud-init status --wait' "${ansible_common_args[@]}" || true
+                  ansible cloud_storage_hosts -i ansible/inventory/proxmox.yml -m command \
+                      -a 'cloud-init status --long' "${ansible_common_args[@]}" || true
                   ansible-playbook -i ansible/inventory/proxmox.yml --limit cloud_storage_hosts \
                       "${ansible_common_args[@]}" ansible/site.yml
 
