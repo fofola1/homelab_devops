@@ -127,10 +127,12 @@ The Alpine image is not stored in the Git repository. A cloud image is a large b
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml`. Cloud-init puts the VM deployment key on `cloud_storage.bootstrap_user` (the image's default user, which has passwordless `doas`); the CD pipeline uses it to create the `access.deploy_user` account, install `sudo`, and authorize the key. Ansible creates the `access.admin_user` account with the committed administrator keys, disables root and password SSH, and installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml`. Cloud-init puts the VM deployment key on `cloud_storage.bootstrap_user` (the image's default user, which has passwordless `doas`); the CD pipeline uses it to create the `access.deploy_user` account, install `sudo`, and authorize the key. Ansible creates the `access.admin_user` account with the committed administrator keys, disables root and password SSH, installs Docker Engine and the Compose plugin, and prepares the storage paths:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
+
+By default those paths live on the VM's own disk. Set `cloud_storage.storage.virtiofs_shares: true` in `config/infra.yaml` to mount them from Proxmox over virtiofs; that requires virtiofs devices on the VM and matching shares configured on the host first.
 
 The compose stack in `docker/compose.yml` starts Immich (port `2283`) and FileBrowser Quantum (port `8080`), both reading from those mounts.
 

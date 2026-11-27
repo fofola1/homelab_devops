@@ -173,12 +173,14 @@
       ansible.builtin.command:
         cmd: modprobe virtiofs
       changed_when: false
+      when: cloud_storage.storage.virtiofs_shares | default(false)
 
     - name: Load the virtiofs kernel module at boot
       ansible.builtin.copy:
         dest: /etc/modules
         mode: "0644"
         content: virtiofs
+      when: cloud_storage.storage.virtiofs_shares | default(false)
 
     - name: Create the shared storage mount points
       ansible.builtin.file:
@@ -197,6 +199,7 @@
         src: immich
         fstype: virtiofs
         state: mounted
+      when: cloud_storage.storage.virtiofs_shares | default(false)
 
     - name: Mount the FileBrowser storage share over virtiofs
       ansible.posix.mount:
@@ -204,6 +207,7 @@
         src: filebrowser
         fstype: virtiofs
         state: mounted
+      when: cloud_storage.storage.virtiofs_shares | default(false)
 
     - name: Create the SSH configuration directory
       ansible.builtin.file:

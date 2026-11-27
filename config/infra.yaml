@@ -46,3 +46,8 @@ cloud_storage:
     gateway: "10.10.10.1"
   deploy:
     path: "/opt/docker"
+  storage:
+    # Mount /tank/immich and /tank/filebrowser from Proxmox over virtiofs.
+    # Requires virtiofs devices on the VM and matching shares on the host;
+    # leave false to keep those paths on the VM's own disk.
+    virtiofs_shares: false
