@@ -40,6 +40,7 @@ locals {
   vm_ipv4_cidr       = local.cfg.cloud_storage.network.cidr
   vm_ipv4_gateway    = local.cfg.cloud_storage.network.gateway
   deploy_user        = local.cfg.access.deploy_user
+  bootstrap_user     = local.cfg.cloud_storage.bootstrap_user
 }
 
 resource "proxmox_virtual_environment_vm" "template" {
@@ -119,7 +120,7 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
     datastore_id = local.vm_datastore
 
     dns {
-      servers = [local.vm_ipv4_gateway]
+      servers = [local.vm_ipv4_gateway, "1.1.1.1"]
     }
 
     ip_config {
@@ -129,9 +130,9 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
       }
     }
 
-    # Alpine's PAM-backed sshd rejects pubkey auth for accounts cloud-init leaves locked.
+    # The image user has a working doas rule; Ansible bootstraps the deploy user from it.
     user_account {
-      username = local.deploy_user
+      username = local.bootstrap_user
       keys     = [var.vm_deploy_ssh_public_key]
       password = var.vm_deploy_password
     }

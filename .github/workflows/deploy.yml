@@ -316,6 +316,8 @@ jobs:
                   echo "cloud_storage_host_ip=$(yq '.cloud_storage.network.ip' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_deploy_user=$(yq '.access.deploy_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
                   echo "cloud_storage_deploy_path=$(yq '.cloud_storage.deploy.path' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_bootstrap_user=$(yq '.cloud_storage.bootstrap_user' config/infra.yaml)" >> "$GITHUB_OUTPUT"
+                  echo "cloud_storage_gateway=$(yq '.cloud_storage.network.gateway' config/infra.yaml)" >> "$GITHUB_OUTPUT"
             - name: "Run Ansible Playbook"
               env:
                   ANSIBLE_HOST_KEY_CHECKING: "true"
@@ -324,6 +326,9 @@ jobs:
                   CLOUD_STORAGE_HOST_IP: ${{ steps.infra.outputs.cloud_storage_host_ip }}
                   CLOUD_STORAGE_DEPLOY_USER: ${{ steps.infra.outputs.cloud_storage_deploy_user }}
                   CLOUD_STORAGE_DEPLOY_PATH: ${{ steps.infra.outputs.cloud_storage_deploy_path }}
+                  CLOUD_STORAGE_BOOTSTRAP_USER: ${{ steps.infra.outputs.cloud_storage_bootstrap_user }}
+                  CLOUD_STORAGE_GATEWAY: ${{ steps.infra.outputs.cloud_storage_gateway }}
+                  CLOUD_STORAGE_DEPLOY_SSH_KEY: ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
                   CLOUD_STORAGE_ROOT_PASSWORD_HASH: ${{ secrets.CLOUD_STORAGE_ROOT_PASSWORD_HASH }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
@@ -357,6 +362,27 @@ jobs:
                   if [[ -z "${cloud_storage_known_hosts}" ]]; then
                       echo "::error::Unable to retrieve SSH host keys for the Cloud Storage VM at ${CLOUD_STORAGE_HOST_IP}."
                       exit 1
+                  fi
+                  if ! ssh "${ssh_options[@]}" "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}" 'sudo -n true' 2>/dev/null; then
+                      echo "Bootstrapping ${CLOUD_STORAGE_DEPLOY_USER} via ${CLOUD_STORAGE_BOOTSTRAP_USER}."
+                      deploy_public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
+                      bootstrap_script=$(
+                          printf '%s\n' \
+                              'set -e' \
+                              "printf 'nameserver ${CLOUD_STORAGE_GATEWAY}\nnameserver 1.1.1.1\n' > /etc/resolv.conf" \
+                              'apk add --no-cache sudo' \
+                              "addgroup ${CLOUD_STORAGE_DEPLOY_USER} 2>/dev/null || true" \
+                              "adduser -D -G ${CLOUD_STORAGE_DEPLOY_USER} -s /bin/ash ${CLOUD_STORAGE_DEPLOY_USER} 2>/dev/null || true" \
+                              "addgroup ${CLOUD_STORAGE_DEPLOY_USER} wheel 2>/dev/null || true" \
+                              "usermod -p '*' ${CLOUD_STORAGE_DEPLOY_USER}" \
+                              "install -d -m 0700 -o ${CLOUD_STORAGE_DEPLOY_USER} -g ${CLOUD_STORAGE_DEPLOY_USER} /home/${CLOUD_STORAGE_DEPLOY_USER}/.ssh" \
+                              "printf '%s\n' '${deploy_public_key}' > /home/${CLOUD_STORAGE_DEPLOY_USER}/.ssh/authorized_keys" \
+                              "chown ${CLOUD_STORAGE_DEPLOY_USER}:${CLOUD_STORAGE_DEPLOY_USER} /home/${CLOUD_STORAGE_DEPLOY_USER}/.ssh/authorized_keys" \
+                              "chmod 0600 /home/${CLOUD_STORAGE_DEPLOY_USER}/.ssh/authorized_keys" \
+                              "printf '%s ALL=(ALL) NOPASSWD: ALL\n' ${CLOUD_STORAGE_DEPLOY_USER} > /etc/sudoers.d/90-deploy" \
+                              'chmod 0440 /etc/sudoers.d/90-deploy'
+                      )
+                      ssh "${ssh_options[@]}" "${CLOUD_STORAGE_BOOTSTRAP_USER}@${CLOUD_STORAGE_HOST_IP}" "doas sh -s" <<< "${bootstrap_script}"
                   fi
                   python -m pip install "ansible==${ANSIBLE_VERSION}"
                   ansible-inventory -i ansible/inventory/proxmox.yml --graph cloud_storage_hosts
