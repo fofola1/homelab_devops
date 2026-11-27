@@ -96,7 +96,10 @@ jobs:
                   test -n "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"
                   public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
                   test -n "${public_key}"
+                  bootstrap_password=$(printf '%s' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}" | sha256sum | cut -d' ' -f1)
+                  echo "::add-mask::${bootstrap_password}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
+                  echo "bootstrap_password=${bootstrap_password}" >> "$GITHUB_OUTPUT"
             - name: "Resolve template profile"
               id: template
               run: |
@@ -169,6 +172,7 @@ jobs:
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_vm_deploy_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+                  TF_VAR_vm_deploy_password: ${{ steps.ssh-key.outputs.bootstrap_password }}
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy
@@ -219,7 +223,10 @@ jobs:
                   test -n "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"
                   public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
                   test -n "${public_key}"
+                  bootstrap_password=$(printf '%s' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}" | sha256sum | cut -d' ' -f1)
+                  echo "::add-mask::${bootstrap_password}"
                   echo "public_key=${public_key}" >> "$GITHUB_OUTPUT"
+                  echo "bootstrap_password=${bootstrap_password}" >> "$GITHUB_OUTPUT"
             - name: "Resolve template profile"
               id: template
               run: |
@@ -250,6 +257,7 @@ jobs:
                   TF_VAR_proxmox_api_url: https://${{ vars.TS_PROXMOX_HOSTNAME }}:8006/
                   TF_VAR_proxmox_api_token: ${{ secrets.PVE_API_TOKEN_ID }}=${{ secrets.PVE_API_TOKEN_SECRET }}
                   TF_VAR_vm_deploy_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+                  TF_VAR_vm_deploy_password: ${{ steps.ssh-key.outputs.bootstrap_password }}
               run: |
                   cd terraform
                   terraform init -backend-config="bucket=${TF_STATE_S3_NAME}" -reconfigure -force-copy

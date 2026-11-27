@@ -51,3 +51,8 @@ variable "vm_network_bridge" {
 variable "vm_deploy_ssh_public_key" {
   type = string
 }
+
+variable "vm_deploy_password" {
+  type      = string
+  sensitive = true
+}

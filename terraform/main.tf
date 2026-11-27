@@ -77,10 +77,19 @@ resource "proxmox_virtual_environment_vm" "template" {
   }
 }
 
+# One-time re-bootstrap: cloud-init must run again to unlock the deploy account.
+resource "terraform_data" "cloud_storage_rebootstrap" {
+  input = "2026-11-27-unlock-deploy-account"
+}
+
 resource "proxmox_virtual_environment_vm" "cloud_storage" {
   name      = var.vm_name
   node_name = local.proxmox_node
   vm_id     = local.vm_id
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.cloud_storage_rebootstrap]
+  }
 
   clone {
     datastore_id = local.vm_datastore
@@ -120,9 +129,11 @@ resource "proxmox_virtual_environment_vm" "cloud_storage" {
       }
     }
 
+    # Alpine's PAM-backed sshd rejects pubkey auth for accounts cloud-init leaves locked.
     user_account {
       username = local.deploy_user
       keys     = [var.vm_deploy_ssh_public_key]
+      password = var.vm_deploy_password
     }
   }
 }
