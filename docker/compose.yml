@@ -13,7 +13,6 @@ services:
       - REDIS_HOSTNAME=immich-redis
       - UPLOAD_LOCATION=/tank/immich
       - TZ=Etc/UTC
-    command: ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
     volumes:
       - /tank/immich:/usr/src/app/upload
     depends_on:
