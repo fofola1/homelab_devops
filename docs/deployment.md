@@ -15,7 +15,7 @@ The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox
 
 The script lists the configured drives in the final confirmation prompt and checks that they exist on the host before changing anything, because the drives are wiped. Edit `config/infra.yaml` first if the selection is wrong.
 
-Leave `proxmox.zfs.drives` empty (or remove the key) on a single-disk server where Proxmox VE and the data share the same disk; the setup then skips the pool. The deployment's `/tank` virtiofs shares assume a separate pool, so point them at directories on the Proxmox disk in that case.
+Leave `proxmox.zfs.drives` empty (or remove the key) on a single-disk server where Proxmox VE and the data share the same disk; the setup then skips the pool. The `/tank/immich` and `/tank/filebrowser` paths used by the workloads stay on the VM's own disk unless `cloud_storage.storage.virtiofs_shares` is enabled. Enabling it requires virtiofs devices on the VM and matching shares configured on the Proxmox host; neither is created by this repository yet.
 
 Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
 
