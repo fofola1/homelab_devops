@@ -80,6 +80,7 @@ proxmox:
       - "/dev/sde"
 
 cloud_storage:
+  bootstrap_user: "alpine"
   id: 120
   datastore: "local-lvm"
   image_datastore: "local"
@@ -126,7 +127,7 @@ The Alpine image is not stored in the Git repository. A cloud image is a large b
 
 ## Cloud storage VM
 
-The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml` and runs the deployment account from `access.deploy_user`, created by the cloud-init user account with the VM deployment key. Ansible creates the `access.admin_user` account with the committed administrator keys, disables root and password SSH, and installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
+The cloud storage VM is named `cloud-storage` and runs on the template selected via `config/infra.yaml` (`cloud_storage.template`). It gets the static address from `config/infra.yaml`. Cloud-init puts the VM deployment key on `cloud_storage.bootstrap_user` (the image's default user, which has passwordless `doas`); the CD pipeline uses it to create the `access.deploy_user` account, install `sudo`, and authorize the key. Ansible creates the `access.admin_user` account with the committed administrator keys, disables root and password SSH, and installs Docker Engine and the Compose plugin, loads the `virtiofs` kernel module, and mounts the shared storage from the ZFS pool:
 
 - `/tank/immich` for the Immich library.
 - `/tank/filebrowser` for the FileBrowser Quantum file manager.
@@ -164,7 +165,7 @@ shellcheck scripts/*.sh prepare-proxmox.sh prepare-proxmox-remote.sh
 
 - **Host key verification failed:** the workflow seeds `known_hosts` from `PROXMOX_KNOWN_HOSTS` and refreshes it with `ssh-keyscan`. Re-run the setup if the secret belongs to an old host.
 - **Cannot SSH to the Proxmox host:** use the administrator account and the committed keys. Root SSH is intentionally disabled; use the console/noVNC with the root password for break-glass access.
-- **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`, not `alpine`. On the Alpine image, an account cloud-init creates without a password is locked and PAM-backed sshd refuses keys; Terraform sets a bootstrap password derived from the deployment key so Ansible can connect and harden sshd.
+- **Cannot SSH to the Cloud Storage VM:** use the administrator account or the deployment key from `CLOUD_STORAGE_DEPLOY_SSH_KEY`. The deployment user is `access.deploy_user`; `alpine` is only the temporary bootstrap account and is locked once Ansible runs. If bootstrap fails, check that `cloud_storage.bootstrap_user` matches the image user and that `apk add sudo` can reach the repositories.
 - **Cloud-init reports `status: error`:** the CD pipeline waits for cloud-init but reports its status instead of failing; Ansible fixes DNS and packages itself and prints the detailed status. Check that output and verify `cloud_storage.network.gateway` in `config/infra.yaml` if packages still fail.
 - **Failed to update the package cache:** the VM has a static address, so Terraform and Ansible configure DNS explicitly. Check the network diagnostics the Ansible job prints and verify the gateway from `cloud_storage.network.gateway` in `config/infra.yaml`.
 - **VM already exists:** restore the `terraform-state` branch, or import the existing VM, before applying again.

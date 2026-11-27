@@ -35,6 +35,8 @@ proxmox:
 
 cloud_storage:
   template: "alpine-324"
+  # Image user with passwordless doas, used to bootstrap the deployment account.
+  bootstrap_user: "alpine"
   id: 120
   datastore: "local-lvm"
   image_datastore: "local"
