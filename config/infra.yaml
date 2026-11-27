@@ -20,11 +20,18 @@ access:
 proxmox:
   node: "nas"
   zfs:
+    # Data pool created by ./prepare-proxmox.sh. The setup wipes these drives.
+    # Use "raidz1" (one-drive redundancy), "mirror", or "none" for a single
+    # drive without redundancy.
     raid_level: "raidz1"
     drives:
       - "/dev/sdc"
       - "/dev/sdd"
       - "/dev/sde"
+    # Example: a single-disk server where Proxmox VE and the data share the
+    # same disk. No data pool is created; use an empty list (or remove the
+    # drives key) and the setup skips the pool:
+    # drives: []
 
 cloud_storage:
   template: "alpine-324"

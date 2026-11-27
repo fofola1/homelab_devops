@@ -11,11 +11,15 @@ The Terraform stages resolve the template profile selected by the `cloud_storage
 
 ## ZFS pool (host storage)
 
-The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
+The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). Its drives and RAID level come from the committed `config/infra.yaml` (`proxmox.zfs.drives` and `proxmox.zfs.raid_level`; use `"none"` for a single drive without redundancy).
 
-When you answer yes to the dedicated-data question, the script lists the whole disks on the Proxmox host over SSH, lets you pick the disks, writes the selection into `config/infra.yaml`, and creates the pool. Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
+The script lists the configured drives in the final confirmation prompt and checks that they exist on the host before changing anything, because the drives are wiped. Edit `config/infra.yaml` first if the selection is wrong.
 
-Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives.
+Leave `proxmox.zfs.drives` empty (or remove the key) on a single-disk server where Proxmox VE and the data share the same disk; the setup then skips the pool. The deployment's `/tank` virtiofs shares assume a separate pool, so point them at directories on the Proxmox disk in that case.
+
+Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
+
+Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and, after the same confirmation, runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives.
 
 CI no longer creates the pool. If the pool is missing later, rerun `./prepare-proxmox.sh` from a machine that can reach the host.
 
@@ -30,7 +34,7 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 
 Before running it, put at least one administrator public key in `config/ssh/admin/` and fill in `config/infra.yaml` (`access.admin_user`, `access.deploy_user`, and the Cloud Storage VM settings).
 
-The script creates the administrator and deployment users, installs the administrator keys and the host deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with the `gh` CLI. It verifies the deployment login and then disables root SSH and password authentication. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
+The script creates the administrator and deployment users, installs the administrator keys and the host deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with the `gh` CLI. It verifies the deployment login and then disables root SSH and password authentication. The root password is requested once; the SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it.
 
 The two deployment keys are independent: `PROXMOX_DEPLOY_SSH_KEY` is authorized for `access.deploy_user` on the host, and `CLOUD_STORAGE_DEPLOY_SSH_KEY` is injected into the VM by Terraform. Rotating one never affects the other.
 
@@ -46,7 +50,7 @@ The plan file is intentionally not uploaded as a workflow artifact. This reposit
 
 ### S3 state backend setup
 
-The optional S3 setup is offered by `./prepare-proxmox.sh` and is configured through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
+The optional S3 setup is offered by `./prepare-proxmox.sh` and is configured through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name, defaults to `tfstate` when unset), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
 
 After configuring the backend, verify it with a test run before relying on it:
 

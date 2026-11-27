@@ -12,6 +12,11 @@ if [[ "${connection}" == ssh://* && "${ssh_target}" =~ ^(.+):([0-9]+)$ ]]; then
 	ssh_target=${BASH_REMATCH[1]}
 	ssh_options=(-p "${BASH_REMATCH[2]}")
 fi
+ssh_root_options=("${ssh_options[@]}")
+# Reuse the root connection opened by prepare-proxmox.sh, if it is still alive.
+if [[ -n "${PREPARE_SSH_CONTROL_PATH:-}" ]]; then
+	ssh_root_options+=(-o ControlMaster=auto -o "ControlPath=${PREPARE_SSH_CONTROL_PATH}" -o ControlPersist=3600)
+fi
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 infra_config_file=$(cd -- "${script_directory}/.." && pwd)/config/infra.yaml
@@ -26,7 +31,7 @@ cloud_storage_image_datastore=$(sed -n 's/^[[:space:]]*image_datastore:[[:space:
 	exit 1
 }
 
-remote_report=$(ssh "${ssh_options[@]}" "${ssh_target}" 'bash -s' <<'EOF'
+remote_report=$(ssh "${ssh_root_options[@]}" "${ssh_target}" 'bash -s' <<'EOF'
 set -euo pipefail
 print_value() {
 	printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | base64 -w0)"
@@ -99,6 +104,9 @@ load_config() {
 	GITHUB_PROXMOX_DEPLOY_KEY_PATH=${exported_proxmox_deploy_key:-${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}}
 	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=${exported_cloud_storage_deploy_key:-${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}}
 	PROXMOX_DEPLOY_USER=${exported_deploy_user:-${PROXMOX_DEPLOY_USER:-}}
+	if [[ -n "${TF_STATE_S3_URL:-}" && -z "${TF_STATE_S3_NAME:-}" ]]; then
+		TF_STATE_S3_NAME=tfstate
+	fi
 	if [[ -z "${PROXMOX_DEPLOY_USER}" ]]; then
 		PROXMOX_DEPLOY_USER=$(sed -n 's/^[[:space:]]*deploy_user:[[:space:]]*"\([^"]*\)".*$/\1/p' "${infra_config_file}" | head -n 1)
 	fi
@@ -108,23 +116,59 @@ load_config() {
 
 load_config
 
-echo
-echo "Effective GitHub configuration"
-printf '%-32s %s\n' \
-	TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME}" \
-	PROXMOX_HOST_KEY_FINGERPRINT "${PROXMOX_HOST_KEY_FINGERPRINT:-}" \
-	TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
-	TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
-	PROXMOX_DEPLOY_USER "${PROXMOX_DEPLOY_USER:-}" \
-	GITHUB_PROXMOX_DEPLOY_KEY_PATH "${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}" \
-	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH "${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}" \
-	PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
-	PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}" \
-	TF_STATE_S3_URL "${TF_STATE_S3_URL:-}" \
-	TF_STATE_S3_NAME "${TF_STATE_S3_NAME:-}" \
-	TERRAFORM_STATE_TO_GIT "${TERRAFORM_STATE_TO_GIT:-true}" \
-	TF_STATE_S3_KEY_ID "${TF_STATE_S3_KEY_ID:+provided}" \
-	TF_STATE_S3_KEY_SECRET "${TF_STATE_S3_KEY_SECRET:+provided}"
+print_effective_config() {
+	echo
+	echo "Effective GitHub configuration"
+	printf '%-32s %s\n' \
+		TS_PROXMOX_HOSTNAME "${TS_PROXMOX_HOSTNAME:-}" \
+		PROXMOX_HOST_KEY_FINGERPRINT "${PROXMOX_HOST_KEY_FINGERPRINT:-}" \
+		TS_OAUTH_CLIENT_ID "${TS_OAUTH_CLIENT_ID:-}" \
+		TS_OAUTH_SECRET "${TS_OAUTH_SECRET:+provided}" \
+		PROXMOX_DEPLOY_USER "${PROXMOX_DEPLOY_USER:-}" \
+		GITHUB_PROXMOX_DEPLOY_KEY_PATH "${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}" \
+		GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH "${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}" \
+		PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
+		PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}" \
+		TF_STATE_S3_URL "${TF_STATE_S3_URL:-}" \
+		TF_STATE_S3_NAME "${TF_STATE_S3_NAME:-}" \
+		TERRAFORM_STATE_TO_GIT "${TERRAFORM_STATE_TO_GIT:-true}" \
+		TF_STATE_S3_KEY_ID "${TF_STATE_S3_KEY_ID:+provided}" \
+		TF_STATE_S3_KEY_SECRET "${TF_STATE_S3_KEY_SECRET:+provided}"
+}
+
+prompt_named_value() {
+	local name=$1
+	local secret=${2:-no}
+	local value
+
+	if [[ "${secret}" == yes ]]; then
+		read -r -s -p "Paste your ${name}: " value || {
+			echo "Input ended before configuration was complete." >&2
+			exit 1
+		}
+		echo >&2
+	else
+		read -r -p "${name}: " value || {
+			echo "Input ended before configuration was complete." >&2
+			exit 1
+		}
+	fi
+	printf -v "${name}" '%s' "${value}"
+}
+
+require_value() {
+	local name=$1
+	local secret=${2:-no}
+
+	[[ -n "${!name:-}" ]] && return
+	prompt_named_value "${name}" "${secret}"
+	[[ -n "${!name:-}" ]] || {
+		echo "${name} is required for deployment." >&2
+		exit 1
+	}
+}
+
+print_effective_config
 
 read -r -p "Add this configuration to a GitHub repository with gh? [y/N]: " publish_answer
 [[ "${publish_answer}" =~ ^[Yy]$ ]] || exit 0
@@ -134,6 +178,15 @@ echo "Edit ${report_config_file} to fill in all required details before continui
 read -r -p "Have you finished editing the configuration? [y/N]: " config_answer
 [[ "${config_answer}" =~ ^[Yy]$ ]] || exit 0
 load_config
+echo "Reloaded ${report_config_file}." >&2
+print_effective_config
+
+require_value TS_OAUTH_CLIENT_ID
+require_value TS_OAUTH_SECRET yes
+if [[ -n "${TF_STATE_S3_URL:-}" ]]; then
+	require_value TF_STATE_S3_KEY_ID yes
+	require_value TF_STATE_S3_KEY_SECRET yes
+fi
 
 for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
 	[[ -n "${!name}" ]] || { echo "Unable to discover ${name} from the Proxmox host." >&2; exit 1; }
@@ -191,7 +244,7 @@ echo "Verified the deployment key for ${PROXMOX_DEPLOY_USER} on ${ssh_host_only}
 
 storage_query_command="pvesh get /storage/${cloud_storage_image_datastore} --output-format json"
 # shellcheck disable=SC2029
-image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command}" |
+image_content=$(ssh "${ssh_root_options[@]}" "${ssh_target}" "${storage_query_command}" |
 	sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [[ -n "${image_content}" ]] || {
 	echo "Unable to read content types for Proxmox storage ${cloud_storage_image_datastore}." >&2
@@ -200,7 +253,7 @@ image_content=$(ssh "${ssh_options[@]}" "${ssh_target}" "${storage_query_command
 if [[ ",${image_content}," != *,import,* ]]; then
 	storage_content_command="pvesm set ${cloud_storage_image_datastore} --content ${image_content},import"
 	# shellcheck disable=SC2029
-	ssh "${ssh_options[@]}" "${ssh_target}" \
+	ssh "${ssh_root_options[@]}" "${ssh_target}" \
 		"${storage_content_command}"
 fi
 

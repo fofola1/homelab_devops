@@ -17,7 +17,11 @@ GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=generate
 
 # Optional: S3 backend (for example Cloudflare R2) that stores the Terraform state.
 # Leave blank to keep the default Git-only state storage on the terraform-state branch.
+# When TF_STATE_S3_URL is set, provide the bucket name (defaults to "tfstate"),
+# the access key ID, and the secret access key below.
 TF_STATE_S3_URL=
 TF_STATE_S3_NAME=
+TF_STATE_S3_KEY_ID=
+TF_STATE_S3_KEY_SECRET=
 # Optional: set to false to stop uploading the Terraform state to the git branch; the state is kept in S3 instead.
 TERRAFORM_STATE_TO_GIT=true

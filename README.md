@@ -37,11 +37,15 @@ Administrator public keys are committed because they are not secrets. Private ke
 
 ## ZFS pool
 
-The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). It is created from the whole disks listed in the committed `config/infra.yaml` (`proxmox.zfs.drives`) with the RAID level from `proxmox.zfs.raid_level`.
+The interactive setup (`prepare-proxmox.sh`) creates the ZFS pool on the Proxmox host. The pool name is fixed (`tank`). Its drives and RAID level come from the committed `config/infra.yaml` (`proxmox.zfs.drives` and `proxmox.zfs.raid_level`; use `"none"` for a single drive without redundancy).
 
-When you answer yes to the dedicated-data question, the script lists the whole disks on the Proxmox host over SSH, lets you pick the disks, writes the selection into `config/infra.yaml`, and creates the pool. Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
+The script lists the configured drives in the final confirmation prompt and checks that they exist on the host before changing anything, because the drives are wiped. Edit `config/infra.yaml` first if the selection is wrong.
 
-Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives. No Ansible or CD step does this; the setup script is the only place that touches the pool.
+Leave `proxmox.zfs.drives` empty (or remove the key) on a single-disk server where Proxmox VE and the data share the same disk; the setup then skips the pool.
+
+Creation is idempotent: it checks `zpool status` first and only runs `zpool create` when the pool does not exist yet.
+
+Growing the pool: add the new drive to the `drives` list in `config/infra.yaml` and rerun `./prepare-proxmox.sh`. The script detects an existing pool and, after the same confirmation, runs `zpool add -f tank <new-device>` for every configured drive that is not part of the pool yet, so the pool spans all the drives. No Ansible or CD step does this; the setup script is the only place that touches the pool.
 
 CI no longer creates the pool. If the pool is missing later, rerun `./prepare-proxmox.sh` from a machine that can reach the host.
 
@@ -54,7 +58,7 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It verifies the deployment login and then disables root SSH and password authentication. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
+The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It verifies the deployment login and then disables root SSH and password authentication. The root password is requested once; the SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
 
 ## Configuration
 
@@ -94,7 +98,7 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | `TS_PROXMOX_HOSTNAME` | Proxmox host address over Tailscale (fetched automatically during setup). |
 | `PROXMOX_HOST_KEY_FINGERPRINT` | Pinned Proxmox host key fingerprint (fetched automatically during setup). |
 | `TF_STATE_S3_URL` | S3 endpoint URL when the optional S3 state backend is used. |
-| `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used. |
+| `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used (defaults to `tfstate`). |
 | `TERRAFORM_STATE_TO_GIT` | Whether to mirror the Terraform state to the `terraform-state` branch; default `true`. |
 
 It also creates the secrets `PROXMOX_DEPLOY_SSH_KEY`, `CLOUD_STORAGE_DEPLOY_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`. The optional `CLOUD_STORAGE_ROOT_PASSWORD_HASH` secret sets the VM root password for console break-glass.

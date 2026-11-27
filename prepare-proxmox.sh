@@ -59,58 +59,45 @@ refresh_ssh_host_key() {
 }
 
 prompt_wol_interface() {
-	local interfaces interface_choice interface_index
+	local interface_report index choice name state addresses
+	local -a interface_names
 
-	interfaces=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
-		"ip -o link show | awk -F': ' '\$2 != \"lo\" {sub(/@.*/, \"\", \$2); print \$2}'") || \
-		die "Unable to list network interfaces on ${SSH_TARGET}."
-	[[ -n "${interfaces}" ]] || die "No non-loopback network interfaces found on ${SSH_TARGET}."
+	interface_report=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" 'bash -s' <<'EOF'
+set -euo pipefail
+while read -r interface; do
+	state=$(cat "/sys/class/net/${interface}/operstate" 2>/dev/null || echo unknown)
+	addresses=$(ip -o addr show dev "${interface}" 2>/dev/null |
+		awk '$3 == "inet" || $3 == "inet6" { printf "%s%s", sep, $4; sep = ", " }')
+	printf '%s\t%s\t%s\n' "${interface}" "${state}" "${addresses:--}"
+done < <(ip -o link show | awk -F': ' '$2 != "lo" { sub(/@.*/, "", $2); print $2 }')
+EOF
+	) || die "Unable to list network interfaces on ${SSH_TARGET}."
+	[[ -n "${interface_report}" ]] || die "No non-loopback network interfaces found on ${SSH_TARGET}."
 
+	interface_names=()
 	echo "Available interfaces on ${SSH_TARGET}:" >&2
-	interface_index=1
-	while IFS= read -r interface; do
-		printf '  %d) %s\n' "${interface_index}" "${interface}" >&2
-		((++interface_index))
-	done <<< "${interfaces}"
+	index=1
+	while IFS=$'\t' read -r name state addresses; do
+		interface_names+=("${name}")
+		printf '  %d) %-8s %-6s %s\n' "${index}" "${name}" "${state}" "${addresses}" >&2
+		index=$((index + 1))
+	done <<< "${interface_report}"
 
 	while :; do
-		read -r -p "Interface number or name: " interface_choice || \
+		read -r -p "Interface number or name: " choice || \
 			die "Input ended before setup was complete."
-		if [[ "${interface_choice}" =~ ^[0-9]+$ ]] &&
-			((interface_choice >= 1 && interface_choice < interface_index)); then
-			printf '%s' "$(printf '%s\n' "${interfaces}" | sed -n "${interface_choice}p")"
+		if [[ "${choice}" =~ ^[0-9]+$ ]] &&
+			((10#${choice} >= 1 && 10#${choice} <= ${#interface_names[@]})); then
+			printf '%s' "${interface_names[10#${choice} - 1]}"
 			return
 		fi
-		if printf '%s\n' "${interfaces}" | grep --fixed-strings --line-regexp --quiet -- "${interface_choice}"; then
-			printf '%s' "${interface_choice}"
+		if printf '%s\n' "${interface_names[@]}" |
+			grep --fixed-strings --line-regexp --quiet -- "${choice}"; then
+			printf '%s' "${choice}"
 			return
 		fi
-		echo "Choose one of the listed interfaces numbers or names." >&2
+		echo "Choose one of the listed interface numbers or names." >&2
 	done
-}
-
-write_zfs_pool() {
-	local drives=$1
-	local temporary_file
-	local infra_config_file
-	temporary_file=$(mktemp)
-	infra_config_file=${script_directory}/config/infra.yaml
-	awk -v drives="${drives}" '
-		/^ *drives:/ {
-			in_list = 1
-			print
-			count = split(drives, items, ",")
-			for (i = 1; i <= count; i++) {
-				printf "      - \"%s\"\n", items[i]
-			}
-			next
-		}
-		in_list && /^ *- / { next }
-		in_list && !/^ *- / && NF > 0 { in_list = 0 }
-		{ print }
-	' "${infra_config_file}" > "${temporary_file}"
-	mv "${temporary_file}" "${infra_config_file}"
-	chmod 0644 "${infra_config_file}"
 }
 
 read_config_value() {
@@ -131,29 +118,21 @@ read_report_value() {
 }
 
 read_zfs_drives_from_config() {
-	local drives_raw
-	local drive_items
-
-	drives_raw=$(awk '
+	mapfile -t zfs_drives < <(awk '
 		/^ *drives:/ {
 			in_list = 1
 			next
 		}
 		in_list && /^ *- / {
-			gsub(/"/, "", $0)
-			print $0
+			gsub(/"/, "")
+			sub(/^ *- /, "")
+			print
 			next
 		}
 		in_list && !/^ *- / && NF > 0 {
 			in_list = 0
 		}
 	' "${infra_config_file}")
-
-	zfs_drives=()
-	if [[ -n "${drives_raw}" ]]; then
-		read -r -a drive_items <<< "${drives_raw}"
-		zfs_drives=("${drive_items[@]}")
-	fi
 }
 
 collect_admin_keys() {
@@ -233,6 +212,24 @@ connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, o
 parse_connection "${connection}"
 refresh_ssh_host_key
 
+# Multiplexing keeps one authenticated connection for the whole run, so the
+# root password is requested once instead of for every SSH command.
+SSH_PLAIN_OPTIONS=("${SSH_OPTIONS[@]}")
+ssh_control_directory=$(mktemp --directory)
+ssh_control_path=${ssh_control_directory}/%C
+SSH_OPTIONS+=(-o ControlMaster=auto -o "ControlPath=${ssh_control_path}" -o ControlPersist=3600)
+export PREPARE_SSH_CONTROL_PATH="${ssh_control_path}"
+temporary_key_directory=
+
+cleanup() {
+	ssh -O exit -o ConnectTimeout=5 "${SSH_OPTIONS[@]}" "${SSH_TARGET}" >/dev/null 2>&1 || true
+	rm -rf "${ssh_control_directory}"
+	if [[ -n "${temporary_key_directory}" ]]; then
+		rm -rf "${temporary_key_directory}"
+	fi
+}
+trap cleanup EXIT
+
 pve_api_user=$(read_config_value deploy_api_user "")
 [[ -n "${pve_api_user}" ]] || die "Set access.deploy_api_user in ${infra_config_file} before running the setup."
 [[ "${pve_api_user}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || \
@@ -252,10 +249,6 @@ admin_keys=()
 collect_admin_keys "${admin_keys_dir}" "${admin_user}"
 
 temporary_key_directory=$(mktemp --directory)
-cleanup_temporary_key_directory() {
-	rm -rf "${temporary_key_directory}"
-}
-trap cleanup_temporary_key_directory EXIT
 
 host_deploy_key=$(prepare_deploy_key "${host_deploy_key_path:-generate}" \
 	"${temporary_key_directory}/proxmox_deploy" "onprem proxmox deploy")
@@ -280,13 +273,56 @@ if [[ "${tailscale_answer}" =~ ^[Yy]$ ]]; then
 	read -r -p "Tailscale name (optional, leave blank for default): " tailscale_hostname
 fi
 
+read_zfs_drives_from_config
+
+case "${zfs_raid_level}" in
+raidz1 | raidz2 | raidz3 | mirror)
+	zfs_create_options=("${zfs_raid_level}")
+	;;
+none | single | stripe)
+	zfs_create_options=()
+	;;
+*)
+	die "Unsupported proxmox.zfs.raid_level '${zfs_raid_level}' in ${infra_config_file}."
+	;;
+esac
+
 echo
 echo "The script will connect to ${SSH_TARGET} and prepare Proxmox VE."
 echo "Administrator user: ${admin_user} (sudo)"
 echo "Deployment user: ${deploy_user} (no sudo, jump host only)"
+if [[ ${#zfs_drives[@]} -gt 0 ]]; then
+	echo
+	echo "ZFS pool 'tank' (${zfs_raid_level}) from proxmox.zfs in ${infra_config_file}:"
+	printf '  %s\n' "${zfs_drives[@]}"
+	echo "Creating the pool wipes these drives; growing an existing pool wipes the added drives."
+	echo "Edit ${infra_config_file} now if this list is wrong."
+else
+	echo "No drives configured in proxmox.zfs.drives; the data pool will be skipped."
+fi
 echo "The root SSH password will be requested once, directly by SSH."
 read -r -p "Continue? [y/N]: " continue_answer
 [[ "${continue_answer}" =~ ^[Yy]$ ]] || die "Cancelled."
+
+if [[ ${#zfs_drives[@]} -gt 0 ]]; then
+	# shellcheck disable=SC2029
+	zfs_drive_report=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
+		"bash -s -- $(printf '%q ' "${zfs_drives[@]}")" <<'EOF'
+set -euo pipefail
+for drive in "$@"; do
+	if [[ -b "${drive}" ]]; then
+		lsblk -dn -o NAME,SIZE,MODEL "${drive}" 2>/dev/null || printf '%s\n' "${drive}"
+	else
+		printf '%s (missing)\n' "${drive}"
+	fi
+done
+EOF
+	) || die "Unable to inspect the configured ZFS drives on ${SSH_TARGET}."
+	if grep --quiet --fixed-strings '(missing)' <<< "${zfs_drive_report}"; then
+		printf '%s\n' "${zfs_drive_report}" | sed 's/^/  /' >&2
+		die "Some drives from proxmox.zfs.drives do not exist on ${SSH_TARGET}. Edit ${infra_config_file} and rerun the setup."
+	fi
+fi
 
 echo "Preparing the Proxmox host..."
 remote_script=${script_directory}/prepare-proxmox-remote.sh
@@ -309,61 +345,40 @@ if [[ ! -f "${config_file}" && -f "${config_file}.example" ]]; then
 	echo "Created ${config_file}; fill it in when prompted." >&2
 fi
 
-read_zfs_drives_from_config
-
-zfs_pool_exists=false
-if ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool status tank >/dev/null 2>&1"; then
-	zfs_pool_exists=true
-fi
-
-if [[ "${zfs_pool_exists}" == true ]]; then
-	zfs_pool_status=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool status tank 2>/dev/null" || true)
-	zfs_pool_members=$(printf '%s\n' "${zfs_pool_status}" | awk '$1 ~ /^\/dev\// { print $1 }')
-	zfs_added_drives=
-	for zfs_drive in "${zfs_drives[@]}"; do
-		if ! printf '%s\n' "${zfs_pool_members}" | grep -qxF -- "${zfs_drive}"; then
-			# shellcheck disable=SC2029
-			ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool add -f tank ${zfs_drive}"
-			zfs_added_drives="${zfs_added_drives:+${zfs_added_drives} }${zfs_drive}"
-		fi
-	done
-	if [[ -n "${zfs_added_drives}" ]]; then
-		echo "ZFS pool 'tank' grown with: ${zfs_added_drives}"
-	else
-		echo "ZFS pool 'tank' already contains all configured drives."
+if [[ ${#zfs_drives[@]} -gt 0 ]]; then
+	zpool_exists=false
+	if ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool status tank >/dev/null 2>&1"; then
+		zpool_exists=true
 	fi
-else
-	zfs_pool_drives=
-	read -r -p "Set up a dedicated drive for application data (photos, media, ...)? [y/N]: " zfs_data_answer
-	if [[ "${zfs_data_answer}" =~ ^[Yy]$ ]]; then
-		mapfile -t zfs_disk_list < <(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
-			"lsblk -d -o NAME,SIZE 2>/dev/null | tail -n +2")
-		if [[ ${#zfs_disk_list[@]} -gt 0 ]]; then
-			echo "Available disks on ${SSH_TARGET}:" >&2
-			zfs_index=1
-			for zfs_drive in "${zfs_disk_list[@]}"; do
-				printf '  %d) %s\n' "${zfs_index}" "${zfs_drive}"
-				zfs_index=$((zfs_index + 1))
+
+	if [[ "${zpool_exists}" == true ]]; then
+		zfs_pool_status=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool status tank 2>/dev/null" || true)
+		zfs_pool_members=$(printf '%s\n' "${zfs_pool_status}" | awk '$1 ~ /^\/dev\// { print $1 }')
+		zfs_pending_drives=()
+		for zfs_drive in "${zfs_drives[@]}"; do
+			if ! printf '%s\n' "${zfs_pool_members}" | grep -qxF -- "${zfs_drive}"; then
+				zfs_pending_drives+=("${zfs_drive}")
+			fi
+		done
+		if [[ ${#zfs_pending_drives[@]} -eq 0 ]]; then
+			echo "ZFS pool 'tank' already contains all configured drives."
+		else
+			echo "Adding drives to ZFS pool 'tank': ${zfs_pending_drives[*]}"
+			for zfs_drive in "${zfs_pending_drives[@]}"; do
+				# shellcheck disable=SC2029
+				ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "zpool add -f tank ${zfs_drive}"
 			done
-			read -r -p "Select disk indices for the ZFS pool (comma-separated): " zfs_selection
-			[[ "${zfs_selection}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "Selection must be comma-separated numbers, for example 1,2,3."
-			IFS=',' read -r -a zfs_chosen <<< "${zfs_selection}"
-			for zfs_idx in "${zfs_chosen[@]}"; do
-				if ((10#${zfs_idx} < 1 || 10#${zfs_idx} > ${#zfs_disk_list[@]})); then
-					die "Disk index ${zfs_idx} is out of range."
-				fi
-				zfs_drive_line="${zfs_disk_list[$((10#${zfs_idx} - 1))]}"
-				read -r -a zfs_drive_parts <<< "${zfs_drive_line}"
-				zfs_pool_drives="${zfs_pool_drives:+${zfs_pool_drives},}/dev/${zfs_drive_parts[0]}"
-			done
+			echo "ZFS pool 'tank' grown."
 		fi
-		if [[ -n "${zfs_pool_drives}" ]]; then
-			write_zfs_pool "${zfs_pool_drives}"
-			zfs_pool_devices=${zfs_pool_drives//,/ }
-			# shellcheck disable=SC2029
-			ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
-				"if ! zpool status tank >/dev/null 2>&1; then zpool create -f tank ${zfs_raid_level} ${zfs_pool_devices}; fi"
-		fi
+	else
+		echo "Creating ZFS pool 'tank' (${zfs_raid_level}) on:"
+		printf '%s\n' "${zfs_drive_report}" | sed 's/^/  /'
+		zfs_create_command=(zpool create -f tank)
+		zfs_create_command+=("${zfs_create_options[@]}")
+		zfs_create_command+=("${zfs_drives[@]}")
+		# shellcheck disable=SC2029
+		ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" "$(printf '%q ' "${zfs_create_command[@]}")"
+		echo "ZFS pool 'tank' created."
 	fi
 fi
 
@@ -424,14 +439,14 @@ EOF
 	echo "Root SSH and password authentication are disabled."
 fi
 
-ssh_deploy_options=("${SSH_OPTIONS[@]}" -i "${host_deploy_key}" -o IdentitiesOnly=yes \
+ssh_deploy_options=("${SSH_PLAIN_OPTIONS[@]}" -i "${host_deploy_key}" -o IdentitiesOnly=yes \
 	-o BatchMode=yes -o "User=${deploy_user}")
 if ! ssh "${ssh_deploy_options[@]}" "${SSH_HOST}" true; then
 	die "Unable to authenticate as ${deploy_user}@${SSH_HOST} with the deployment key."
 fi
 echo "Verified ${deploy_user} SSH access."
 
-if ssh "${SSH_OPTIONS[@]}" -o BatchMode=yes -o "User=root" "${SSH_HOST}" true 2>/dev/null; then
+if ssh "${SSH_PLAIN_OPTIONS[@]}" -o BatchMode=yes -o "User=root" "${SSH_HOST}" true 2>/dev/null; then
 	echo "Warning: root SSH still succeeds. Check /etc/ssh/sshd_config.d/10-onprem.conf." >&2
 fi
 
