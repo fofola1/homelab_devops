@@ -32,6 +32,21 @@ validate_username() {
 	[[ "${user}" != root ]] || die "${label} must not be root."
 }
 
+prompt_hidden_required() {
+	local prompt=$1
+	local value
+
+	while :; do
+		read -r -s -p "${prompt}: " value || die "Input ended before setup was complete."
+		echo >&2
+		if [[ -n "${value}" ]]; then
+			printf '%s' "${value}"
+			return
+		fi
+		echo "A value is required." >&2
+	done
+}
+
 parse_connection() {
 	local connection=$1
 
@@ -248,6 +263,11 @@ validate_username "${deploy_user}" "Deployment user"
 admin_keys=()
 collect_admin_keys "${admin_keys_dir}" "${admin_user}"
 
+root_password=$(prompt_hidden_required "Root password for console access on Proxmox and all VMs")
+root_password_hash=$(openssl passwd -6 -salt "$(openssl rand -hex 8)" "${root_password}") || \
+	die "Unable to generate the root password hash."
+unset root_password
+
 temporary_key_directory=$(mktemp --directory)
 
 host_deploy_key=$(prepare_deploy_key "${host_deploy_key_path:-generate}" \
@@ -396,6 +416,7 @@ GITHUB_PROXMOX_DEPLOY_KEY_PATH="${host_deploy_key}" \
 GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH="${vm_deploy_key}" \
 PVE_API_TOKEN_ID="${pve_api_user}@pve!deploy" \
 PVE_API_TOKEN_SECRET="${api_token_secret}" \
+VM_ROOT_PASSWORD_HASH="${root_password_hash}" \
 	bash "${report_script}" "${connection}"
 
 echo
@@ -454,3 +475,4 @@ echo
 echo "Done. Proxmox API user: ${pve_api_user}@pve"
 echo "Administrator user: ${admin_user}"
 echo "Deployment user: ${deploy_user}"
+echo "Root password hash uploaded as VM_ROOT_PASSWORD_HASH for console access."
