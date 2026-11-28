@@ -38,6 +38,14 @@
           config/ssh/admin/.
 
   tasks:
+    # Set access credentials first so a later task failure does not lock out
+    # the administrator or root console.
+    - name: Set the root console password
+      ansible.builtin.user:
+        name: root
+        password: "{{ lookup('env', 'VM_ROOT_PASSWORD_HASH') }}"
+      when: lookup('env', 'VM_ROOT_PASSWORD_HASH') | length > 0
+
     - name: Inspect the VM network configuration
       ansible.builtin.command:
         cmd: "{{ item }}"
@@ -102,6 +110,10 @@
         create_home: true
         shell: /bin/ash
         state: present
+        # Keep the account passwordless but unlocked so key-only SSH works
+        # with PAM-backed sshd.
+        password: "*"
+        password_lock: false
 
     - name: Collect the administrator authorized keys
       ansible.builtin.set_fact:
@@ -252,12 +264,6 @@
     - name: Validate the SSH configuration
       ansible.builtin.command: /usr/sbin/sshd -t
       changed_when: false
-
-    - name: Set the root console password
-      ansible.builtin.user:
-        name: root
-        password: "{{ lookup('env', 'VM_ROOT_PASSWORD_HASH') }}"
-      when: lookup('env', 'VM_ROOT_PASSWORD_HASH') | length > 0
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
