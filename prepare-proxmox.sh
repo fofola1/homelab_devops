@@ -251,21 +251,7 @@ prepare_deploy_key() {
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 infra_config_file=${script_directory}/config/infra.yaml
 [[ -f "${infra_config_file}" ]] || die "Infrastructure configuration file not found: ${infra_config_file}"
-
-admin_keys_dir_relative=$(read_config_value admin_authorized_keys_dir config/ssh/admin)
-zfs_raid_level=$(read_config_value raid_level raidz1)
-vm_ip=$(read_config_value ip "")
-admin_keys_dir=${script_directory}/${admin_keys_dir_relative}
 report_config_file=${script_directory}/report-proxmox-state.conf
-
-host_deploy_key_path=${PROXMOX_DEPLOY_KEY_PATH:-}
-if [[ -z "${host_deploy_key_path}" && -f "${report_config_file}" ]]; then
-	host_deploy_key_path=$(read_report_value GITHUB_PROXMOX_DEPLOY_KEY_PATH)
-fi
-vm_deploy_key_path=${CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
-if [[ -z "${vm_deploy_key_path}" && -f "${report_config_file}" ]]; then
-	vm_deploy_key_path=$(read_report_value GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH)
-fi
 
 connection=$(prompt_required "SSH root connection (root@host, ssh://root@host, or SSH config alias)")
 parse_connection "${connection}"
@@ -288,6 +274,38 @@ cleanup() {
 	fi
 }
 trap cleanup EXIT
+
+if [[ ! -f "${report_config_file}" && -f "${report_config_file}.example" ]]; then
+	cp "${report_config_file}.example" "${report_config_file}"
+	echo "Created ${report_config_file} from the example file." >&2
+fi
+
+echo
+echo "The setup reads configuration from:"
+echo "  ${infra_config_file}"
+if [[ -f "${report_config_file}" ]]; then
+	echo "  ${report_config_file}"
+else
+	echo "  ${report_config_file} (will be created from report-proxmox-state.conf.example)"
+fi
+echo "The first value it reads is access.admin_authorized_keys_dir from ${infra_config_file}."
+echo "Edit these files now if needed."
+read -r -p "Continue? [y/N]: " config_continue_answer
+[[ "${config_continue_answer}" =~ ^[Yy]$ ]] || die "Cancelled."
+
+admin_keys_dir_relative=$(read_config_value admin_authorized_keys_dir config/ssh/admin)
+zfs_raid_level=$(read_config_value raid_level raidz1)
+vm_ip=$(read_config_value ip "")
+admin_keys_dir=${script_directory}/${admin_keys_dir_relative}
+
+host_deploy_key_path=${PROXMOX_DEPLOY_KEY_PATH:-}
+if [[ -z "${host_deploy_key_path}" ]]; then
+	host_deploy_key_path=$(read_report_value GITHUB_PROXMOX_DEPLOY_KEY_PATH)
+fi
+vm_deploy_key_path=${CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
+if [[ -z "${vm_deploy_key_path}" ]]; then
+	vm_deploy_key_path=$(read_report_value GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH)
+fi
 
 pve_api_user=$(read_config_value deploy_api_user "")
 [[ -n "${pve_api_user}" ]] || die "Set access.deploy_api_user in ${infra_config_file} before running the setup."
@@ -406,12 +424,6 @@ remote_output=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" \
 printf '%s\n' "${remote_output}" | sed '/^Proxmox API token secret:/d'
 api_token_secret=$(printf '%s\n' "${remote_output}" | sed -n 's/^Proxmox API token secret: //p')
 [[ -n "${api_token_secret}" ]] || die "Remote setup did not return the Proxmox API token secret."
-
-config_file=${script_directory}/report-proxmox-state.conf
-if [[ ! -f "${config_file}" && -f "${config_file}.example" ]]; then
-	cp "${config_file}.example" "${config_file}"
-	echo "Created ${config_file}; fill it in when prompted." >&2
-fi
 
 if [[ ${#zfs_drives[@]} -gt 0 ]]; then
 	zpool_exists=false

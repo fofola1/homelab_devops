@@ -58,7 +58,7 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It reads the VM root password from `VM_ROOT_PASSWORD` in `report-proxmox-state.conf` (or prompts once if unset), hashes it, and uploads the hash as `VM_ROOT_PASSWORD_HASH` for VM console access. It verifies the deployment login and then disables root SSH and password authentication. The SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
+The setup script asks you to review `config/infra.yaml` and `report-proxmox-state.conf` before it reads them. It then creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It reads the VM root password from `VM_ROOT_PASSWORD` in `report-proxmox-state.conf` (or prompts once if unset), hashes it, and uploads the hash as `VM_ROOT_PASSWORD_HASH` for VM console access. It verifies the deployment login and then disables root SSH and password authentication. The SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
 
 ## Configuration
 
