@@ -58,7 +58,7 @@ cp report-proxmox-state.conf.example report-proxmox-state.conf
 ./prepare-proxmox.sh
 ```
 
-The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It asks for a root password once (hidden) and uploads its hash as `VM_ROOT_PASSWORD_HASH` for VM console access. It verifies the deployment login and then disables root SSH and password authentication. The SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
+The setup script creates the administrator and deployment users, installs the administrator keys, installs the deployment key, creates the API token, creates the ZFS pool, and uploads the repository variables and secrets with `gh`. It reads the VM root password from `VM_ROOT_PASSWORD` in `report-proxmox-state.conf` (or prompts once if unset), hashes it, and uploads the hash as `VM_ROOT_PASSWORD_HASH` for VM console access. It verifies the deployment login and then disables root SSH and password authentication. The SSH connection is reused for the rest of the run. `report-proxmox-state.conf` is gitignored because it can contain the Tailscale OAuth secret; never commit it. See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough and recovery steps.
 
 ## Configuration
 
@@ -102,7 +102,7 @@ The interactive setup writes these repository variables from `report-proxmox-sta
 | `TF_STATE_S3_NAME` | S3 bucket name when the optional S3 state backend is used (defaults to `tfstate`). |
 | `TERRAFORM_STATE_TO_GIT` | Whether to mirror the Terraform state to the `terraform-state` branch; default `true`. |
 
-It also creates the secrets `PROXMOX_DEPLOY_SSH_KEY`, `CLOUD_STORAGE_DEPLOY_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `VM_ROOT_PASSWORD_HASH`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`. The setup asks for the root password once (hidden) and uploads its hash as `VM_ROOT_PASSWORD_HASH`, which sets the root password on the Cloud Storage VM for console break-glass.
+It also creates the secrets `PROXMOX_DEPLOY_SSH_KEY`, `CLOUD_STORAGE_DEPLOY_SSH_KEY`, `PROXMOX_KNOWN_HOSTS`, `PVE_API_TOKEN`, `PVE_API_TOKEN_ID`, `PVE_API_TOKEN_SECRET`, `VM_ROOT_PASSWORD_HASH`, `TS_OAUTH_CLIENT_ID`, and `TS_OAUTH_SECRET`. The setup reads `VM_ROOT_PASSWORD` from `report-proxmox-state.conf` (or prompts once when it is unset) and uploads its hash as `VM_ROOT_PASSWORD_HASH`, which sets the root password on the Cloud Storage VM for console break-glass.
 
 The administrator public keys are committed under `config/ssh/admin/` (one or more `*.pub` files). They are public by design; private keys must never be committed.
 
