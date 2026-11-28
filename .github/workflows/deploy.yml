@@ -329,7 +329,7 @@ jobs:
                   CLOUD_STORAGE_BOOTSTRAP_USER: ${{ steps.infra.outputs.cloud_storage_bootstrap_user }}
                   CLOUD_STORAGE_GATEWAY: ${{ steps.infra.outputs.cloud_storage_gateway }}
                   CLOUD_STORAGE_DEPLOY_SSH_KEY: ${{ secrets.CLOUD_STORAGE_DEPLOY_SSH_KEY }}
-                  CLOUD_STORAGE_ROOT_PASSWORD_HASH: ${{ secrets.CLOUD_STORAGE_ROOT_PASSWORD_HASH }}
+                  VM_ROOT_PASSWORD_HASH: ${{ secrets.VM_ROOT_PASSWORD_HASH }}
                   PROXMOX_KNOWN_HOSTS: ${{ secrets.PROXMOX_KNOWN_HOSTS }}
                   PROXMOX_HOST_KEY_FINGERPRINT: ${{ vars.PROXMOX_HOST_KEY_FINGERPRINT }}
               run: |

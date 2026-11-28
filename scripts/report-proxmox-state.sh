@@ -91,6 +91,7 @@ load_config() {
 	local exported_proxmox_deploy_key=${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}
 	local exported_cloud_storage_deploy_key=${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
 	local exported_deploy_user=${PROXMOX_DEPLOY_USER:-}
+	local exported_root_password_hash=${VM_ROOT_PASSWORD_HASH:-}
 	# shellcheck disable=SC1090
 	source "${report_config_file}"
 	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
@@ -104,6 +105,7 @@ load_config() {
 	GITHUB_PROXMOX_DEPLOY_KEY_PATH=${exported_proxmox_deploy_key:-${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}}
 	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=${exported_cloud_storage_deploy_key:-${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}}
 	PROXMOX_DEPLOY_USER=${exported_deploy_user:-${PROXMOX_DEPLOY_USER:-}}
+	VM_ROOT_PASSWORD_HASH=${exported_root_password_hash:-${VM_ROOT_PASSWORD_HASH:-}}
 	if [[ -n "${TF_STATE_S3_URL:-}" && -z "${TF_STATE_S3_NAME:-}" ]]; then
 		TF_STATE_S3_NAME=tfstate
 	fi
@@ -129,6 +131,7 @@ print_effective_config() {
 		GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH "${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}" \
 		PVE_API_TOKEN_ID "${PVE_API_TOKEN_ID:+provided by prepare-proxmox.sh}" \
 		PVE_API_TOKEN_SECRET "${PVE_API_TOKEN_SECRET:+provided by prepare-proxmox.sh}" \
+		VM_ROOT_PASSWORD_HASH "${VM_ROOT_PASSWORD_HASH:+provided by prepare-proxmox.sh}" \
 		TF_STATE_S3_URL "${TF_STATE_S3_URL:-}" \
 		TF_STATE_S3_NAME "${TF_STATE_S3_NAME:-}" \
 		TERRAFORM_STATE_TO_GIT "${TERRAFORM_STATE_TO_GIT:-true}" \
@@ -193,7 +196,7 @@ for name in TS_PROXMOX_HOSTNAME PROXMOX_NODE; do
 done
 for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET PROXMOX_DEPLOY_USER \
 	GITHUB_PROXMOX_DEPLOY_KEY_PATH GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH \
-	PVE_API_TOKEN_ID PVE_API_TOKEN_SECRET; do
+	PVE_API_TOKEN_ID PVE_API_TOKEN_SECRET VM_ROOT_PASSWORD_HASH; do
 	[[ -n "${!name:-}" ]] || { echo "${name} is required for deployment." >&2; exit 1; }
 done
 
@@ -284,6 +287,8 @@ gh secret set PVE_API_TOKEN_SECRET --repo "${repository}" --app actions --body "
 gh secret set PVE_API_TOKEN --repo "${repository}" --app actions \
 	--body "${PVE_API_TOKEN_ID}=${PVE_API_TOKEN_SECRET}"
 gh secret set PROXMOX_KNOWN_HOSTS --repo "${repository}" --app actions --body "${values[PROXMOX_KNOWN_HOSTS]}"
+gh secret set VM_ROOT_PASSWORD_HASH --repo "${repository}" --app actions \
+	--body "${VM_ROOT_PASSWORD_HASH}"
 
 if [[ -n "${TF_STATE_S3_URL:-}" ]]; then
 	gh variable set TF_STATE_S3_URL --repo "${repository}" --body "${TF_STATE_S3_URL}"

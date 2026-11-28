@@ -256,8 +256,8 @@
     - name: Set the root console password
       ansible.builtin.user:
         name: root
-        password: "{{ lookup('env', 'CLOUD_STORAGE_ROOT_PASSWORD_HASH') }}"
-      when: lookup('env', 'CLOUD_STORAGE_ROOT_PASSWORD_HASH') | length > 0
+        password: "{{ lookup('env', 'VM_ROOT_PASSWORD_HASH') }}"
+      when: lookup('env', 'VM_ROOT_PASSWORD_HASH') | length > 0
 
     - name: Verify Docker installation
       ansible.builtin.command: docker version
