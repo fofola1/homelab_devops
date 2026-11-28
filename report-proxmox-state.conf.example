@@ -9,6 +9,10 @@
 # Set these here or export them in your shell (exported values are used when empty).
 TS_OAUTH_CLIENT_ID=
 TS_OAUTH_SECRET=
+# Root password for console access on the Cloud Storage VM. It is hashed and
+# uploaded as VM_ROOT_PASSWORD_HASH. Set it in report-proxmox-state.conf, not
+# in this example file. Leave blank to be prompted once.
+VM_ROOT_PASSWORD=
 # Required: local private-key paths, or "generate" to create temporary Ed25519 keys.
 # The host key is authorized for the deployment user on Proxmox; the VM key is
 # injected into the Cloud Storage VM by Terraform.

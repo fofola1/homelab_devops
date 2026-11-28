@@ -126,10 +126,19 @@ read_config_value() {
 
 read_report_value() {
 	local key=$1
-	local config_file=${script_directory}/report-proxmox-state.conf
+	local config_file
+	local value
 
-	[[ -f "${config_file}" ]] || return 0
-	sed -n "s/^[[:space:]]*${key}=//p" "${config_file}" | tail -n 1
+	for config_file in \
+		"${script_directory}/report-proxmox-state.conf" \
+		"${script_directory}/report-proxmox-state.conf.example"; do
+		[[ -f "${config_file}" ]] || continue
+		value=$(sed -n "s/^[[:space:]]*${key}=//p" "${config_file}" | tail -n 1)
+		if [[ -n "${value}" ]]; then
+			printf '%s' "${value}"
+			return
+		fi
+	done
 }
 
 read_zfs_drives_from_config() {
@@ -263,11 +272,6 @@ validate_username "${deploy_user}" "Deployment user"
 admin_keys=()
 collect_admin_keys "${admin_keys_dir}" "${admin_user}"
 
-root_password=$(prompt_hidden_required "Root password for console access on Proxmox and all VMs")
-root_password_hash=$(openssl passwd -6 -salt "$(openssl rand -hex 8)" "${root_password}") || \
-	die "Unable to generate the root password hash."
-unset root_password
-
 temporary_key_directory=$(mktemp --directory)
 
 host_deploy_key=$(prepare_deploy_key "${host_deploy_key_path:-generate}" \
@@ -323,6 +327,15 @@ fi
 echo "The root SSH password will be requested once, directly by SSH."
 read -r -p "Continue? [y/N]: " continue_answer
 [[ "${continue_answer}" =~ ^[Yy]$ ]] || die "Cancelled."
+
+root_password=$(read_report_value VM_ROOT_PASSWORD)
+if [[ -z "${root_password}" ]]; then
+	root_password=$(prompt_hidden_required \
+		"VM root password (set VM_ROOT_PASSWORD in ${report_config_file} to skip this prompt)")
+fi
+root_password_hash=$(openssl passwd -6 -salt "$(openssl rand -hex 8)" "${root_password}") || \
+	die "Unable to generate the root password hash."
+unset root_password
 
 if [[ ${#zfs_drives[@]} -gt 0 ]]; then
 	# shellcheck disable=SC2029
