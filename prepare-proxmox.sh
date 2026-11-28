@@ -74,16 +74,47 @@ refresh_ssh_host_key() {
 }
 
 prompt_wol_interface() {
-	local interface_report index choice name state addresses
+	local interface_report index choice name kind state mac addresses details
 	local -a interface_names
 
 	interface_report=$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET}" 'bash -s' <<'EOF'
 set -euo pipefail
+default_interface=$(ip route show default 2>/dev/null | awk '{ print $5; exit }' || true)
 while read -r interface; do
 	state=$(cat "/sys/class/net/${interface}/operstate" 2>/dev/null || echo unknown)
+	mac=$(cat "/sys/class/net/${interface}/address" 2>/dev/null || echo unknown)
 	addresses=$(ip -o addr show dev "${interface}" 2>/dev/null |
 		awk '$3 == "inet" || $3 == "inet6" { printf "%s%s", sep, $4; sep = ", " }')
-	printf '%s\t%s\t%s\n' "${interface}" "${state}" "${addresses:--}"
+	if [[ -d "/sys/class/net/${interface}/bridge" ]]; then
+		kind=bridge
+		members=$(ls "/sys/class/net/${interface}/brif" 2>/dev/null | paste -sd, - || true)
+		details="bridge${members:+ over ${members}}"
+	elif [[ -e "/sys/class/net/${interface}/device" ]]; then
+		kind=physical
+		driver=$(basename "$(readlink -f "/sys/class/net/${interface}/device/driver" 2>/dev/null)" 2>/dev/null || true)
+		pci=$(basename "$(readlink -f "/sys/class/net/${interface}/device" 2>/dev/null)" 2>/dev/null || true)
+		model=$(lspci -s "${pci}" 2>/dev/null | sed -e 's/^[^ ]* //' -e 's/^[^:]*: //' || true)
+		details="physical${model:+ ${model}}${driver:+ (driver ${driver})}${pci:+, ${pci}}"
+		if command -v ethtool >/dev/null 2>&1; then
+			wol=$(ethtool "${interface}" 2>/dev/null |
+				awk -F: '/Wake-on/ { gsub(/^ +/, "", $2); print $2; exit }' || true)
+			details="${details}${wol:+, Wake-on ${wol}}"
+		fi
+	elif [[ -d "/sys/class/net/${interface}/bonding" ]]; then
+		kind=bond
+		details=bond
+	elif [[ "${interface}" == *.* ]]; then
+		kind=vlan
+		details=vlan
+	else
+		kind=virtual
+		details=virtual
+	fi
+	if [[ "${interface}" == "${default_interface}" ]]; then
+		details="${details} (default route)"
+	fi
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"${interface}" "${kind}" "${state}" "${mac}" "${addresses:--}" "${details}"
 done < <(ip -o link show | awk -F': ' '$2 != "lo" { sub(/@.*/, "", $2); print $2 }')
 EOF
 	) || die "Unable to list network interfaces on ${SSH_TARGET}."
@@ -91,15 +122,19 @@ EOF
 
 	interface_names=()
 	echo "Available interfaces on ${SSH_TARGET}:" >&2
+	printf '  %s %-8s %-9s %-6s %-17s %-24s %s\n' \
+		"#" "Name" "Type" "State" "MAC" "Addresses" "Details" >&2
 	index=1
-	while IFS=$'\t' read -r name state addresses; do
+	while IFS=$'\t' read -r name kind state mac addresses details; do
 		interface_names+=("${name}")
-		printf '  %d) %-8s %-6s %s\n' "${index}" "${name}" "${state}" "${addresses}" >&2
+		printf '  %d) %-8s %-9s %-6s %-17s %-24s %s\n' \
+			"${index}" "${name}" "${kind}" "${state}" "${mac}" "${addresses}" "${details}" >&2
 		index=$((index + 1))
 	done <<< "${interface_report}"
+	echo "Wake-on-LAN must be enabled on a physical NIC, not on a bridge." >&2
 
 	while :; do
-		read -r -p "Interface number or name: " choice || \
+		read -r -p "Interface number or name (physical NIC recommended): " choice || \
 			die "Input ended before setup was complete."
 		if [[ "${choice}" =~ ^[0-9]+$ ]] &&
 			((10#${choice} >= 1 && 10#${choice} <= ${#interface_names[@]})); then
