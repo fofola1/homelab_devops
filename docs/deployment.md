@@ -50,7 +50,7 @@ The plan file is intentionally not uploaded as a workflow artifact. This reposit
 
 ### S3 state backend setup
 
-The optional S3 setup is offered by `./prepare-proxmox.sh` and is configured through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name, defaults to `tfstate` when unset), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
+The optional S3 setup is configured in `report-proxmox-state.conf` through the repository variable `TF_STATE_S3_URL` (S3 endpoint URL), the repository variable `TF_STATE_S3_NAME` (S3 bucket name, defaults to `tfstate` when unset), the secret `TF_STATE_S3_KEY_ID` (R2 access key ID), and the secret `TF_STATE_S3_KEY_SECRET` (R2 secret access key). Values missing from `report-proxmox-state.conf` are read from `report-proxmox-state.conf.example`; `TF_STATE_S3_SECRET` is accepted as an alias for `TF_STATE_S3_KEY_SECRET`. The R2 API token provides the access key ID and secret access key that the Terraform S3 backend uses; no separate token is required.
 
 After configuring the backend, verify it with a test run before relying on it:
 
