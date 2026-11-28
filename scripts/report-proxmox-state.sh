@@ -79,6 +79,24 @@ report_config_file=$(cd -- "${script_directory}/.." && pwd)/report-proxmox-state
 }
 echo "Using configuration file: ${report_config_file}"
 
+first_non_empty() {
+	local value
+	for value in "$@"; do
+		if [[ -n "${value}" ]]; then
+			printf '%s' "${value}"
+			return
+		fi
+	done
+}
+
+load_config_file() {
+	local config_file=$1
+
+	[[ -f "${config_file}" ]] || return 0
+	# shellcheck disable=SC1090
+	source "${config_file}"
+}
+
 load_config() {
 	local exported_client_id=${TS_OAUTH_CLIENT_ID:-}
 	local exported_client_secret=${TS_OAUTH_SECRET:-}
@@ -92,20 +110,44 @@ load_config() {
 	local exported_cloud_storage_deploy_key=${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
 	local exported_deploy_user=${PROXMOX_DEPLOY_USER:-}
 	local exported_root_password_hash=${VM_ROOT_PASSWORD_HASH:-}
-	# shellcheck disable=SC1090
-	source "${report_config_file}"
-	TS_OAUTH_CLIENT_ID=${TS_OAUTH_CLIENT_ID:-${exported_client_id}}
-	TS_OAUTH_SECRET=${TS_OAUTH_SECRET:-${exported_client_secret}}
-	TF_STATE_S3_URL=${TF_STATE_S3_URL:-${exported_s3_url}}
-	TF_STATE_S3_NAME=${TF_STATE_S3_NAME:-${exported_s3_name}}
-	TF_STATE_S3_KEY_ID=${TF_STATE_S3_KEY_ID:-${exported_s3_key_id}}
-	TF_STATE_S3_KEY_SECRET=${TF_STATE_S3_KEY_SECRET:-${exported_s3_key_secret}}
-	TERRAFORM_STATE_TO_GIT=${TERRAFORM_STATE_TO_GIT:-${exported_terraform_state_to_git}}
-	PROXMOX_HOST_KEY_FINGERPRINT=${PROXMOX_HOST_KEY_FINGERPRINT:-${exported_host_key_fingerprint}}
-	GITHUB_PROXMOX_DEPLOY_KEY_PATH=${exported_proxmox_deploy_key:-${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}}
-	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=${exported_cloud_storage_deploy_key:-${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}}
-	PROXMOX_DEPLOY_USER=${exported_deploy_user:-${PROXMOX_DEPLOY_USER:-}}
-	VM_ROOT_PASSWORD_HASH=${exported_root_password_hash:-${VM_ROOT_PASSWORD_HASH:-}}
+	local example_client_id example_client_secret example_s3_url example_s3_name
+	local example_s3_key_id example_s3_key_secret example_terraform_state_to_git
+	local example_proxmox_deploy_key example_cloud_storage_deploy_key example_deploy_user
+
+	# The example file is tracked and usually holds placeholders; the local file
+	# overrides it. Reading both means values put in the example are not lost.
+	load_config_file "${report_config_file}.example"
+	example_client_id=${TS_OAUTH_CLIENT_ID:-}
+	example_client_secret=${TS_OAUTH_SECRET:-}
+	example_s3_url=${TF_STATE_S3_URL:-}
+	example_s3_name=${TF_STATE_S3_NAME:-}
+	example_s3_key_id=${TF_STATE_S3_KEY_ID:-}
+	example_s3_key_secret=${TF_STATE_S3_KEY_SECRET:-}
+	example_terraform_state_to_git=${TERRAFORM_STATE_TO_GIT:-}
+	example_proxmox_deploy_key=${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}
+	example_cloud_storage_deploy_key=${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}
+	example_deploy_user=${PROXMOX_DEPLOY_USER:-}
+	load_config_file "${report_config_file}"
+
+	TS_OAUTH_CLIENT_ID=$(first_non_empty "${TS_OAUTH_CLIENT_ID:-}" "${example_client_id}" "${exported_client_id}")
+	TS_OAUTH_SECRET=$(first_non_empty "${TS_OAUTH_SECRET:-}" "${example_client_secret}" "${exported_client_secret}")
+	TF_STATE_S3_URL=$(first_non_empty "${TF_STATE_S3_URL:-}" "${example_s3_url}" "${exported_s3_url}")
+	TF_STATE_S3_NAME=$(first_non_empty "${TF_STATE_S3_NAME:-}" "${example_s3_name}" "${exported_s3_name}")
+	TF_STATE_S3_KEY_ID=$(first_non_empty "${TF_STATE_S3_KEY_ID:-}" "${example_s3_key_id}" "${exported_s3_key_id}")
+	TF_STATE_S3_KEY_SECRET=$(first_non_empty "${TF_STATE_S3_KEY_SECRET:-}" "${TF_STATE_S3_SECRET:-}" \
+		"${example_s3_key_secret}" "${exported_s3_key_secret}")
+	unset TF_STATE_S3_SECRET
+	TERRAFORM_STATE_TO_GIT=$(first_non_empty "${TERRAFORM_STATE_TO_GIT:-}" \
+		"${example_terraform_state_to_git}" "${exported_terraform_state_to_git}")
+	PROXMOX_HOST_KEY_FINGERPRINT=$(first_non_empty "${PROXMOX_HOST_KEY_FINGERPRINT:-}" \
+		"${exported_host_key_fingerprint}")
+	GITHUB_PROXMOX_DEPLOY_KEY_PATH=$(first_non_empty "${exported_proxmox_deploy_key}" \
+		"${GITHUB_PROXMOX_DEPLOY_KEY_PATH:-}" "${example_proxmox_deploy_key}")
+	GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH=$(first_non_empty "${exported_cloud_storage_deploy_key}" \
+		"${GITHUB_CLOUD_STORAGE_DEPLOY_KEY_PATH:-}" "${example_cloud_storage_deploy_key}")
+	PROXMOX_DEPLOY_USER=$(first_non_empty "${exported_deploy_user}" "${PROXMOX_DEPLOY_USER:-}" \
+		"${example_deploy_user}")
+	VM_ROOT_PASSWORD_HASH=$(first_non_empty "${exported_root_password_hash}" "${VM_ROOT_PASSWORD_HASH:-}")
 	if [[ -n "${TF_STATE_S3_URL:-}" && -z "${TF_STATE_S3_NAME:-}" ]]; then
 		TF_STATE_S3_NAME=tfstate
 	fi

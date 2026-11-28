@@ -106,7 +106,7 @@ It also creates the secrets `PROXMOX_DEPLOY_SSH_KEY`, `CLOUD_STORAGE_DEPLOY_SSH_
 
 The administrator public keys are committed under `config/ssh/admin/` (one or more `*.pub` files). They are public by design; private keys must never be committed.
 
-When the optional S3 state backend is configured, it also creates the repository variable `TF_STATE_S3_URL`, the repository variable `TF_STATE_S3_NAME`, the secret `TF_STATE_S3_KEY_ID`, and the secret `TF_STATE_S3_KEY_SECRET`. The S3 values are requested by `./prepare-proxmox.sh` when the optional S3 setup is accepted.
+When the optional S3 state backend is configured, it also creates the repository variable `TF_STATE_S3_URL`, the repository variable `TF_STATE_S3_NAME`, the secret `TF_STATE_S3_KEY_ID`, and the secret `TF_STATE_S3_KEY_SECRET`. The S3 values are read from `report-proxmox-state.conf`, with `report-proxmox-state.conf.example` used as a fallback for values that are empty there.
 
 ## VM templates
 
