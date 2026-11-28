@@ -364,13 +364,37 @@ jobs:
                       exit 1
                   fi
                   if ! ssh "${ssh_options[@]}" "${CLOUD_STORAGE_DEPLOY_USER}@${CLOUD_STORAGE_HOST_IP}" 'sudo -n true' 2>/dev/null; then
+                      echo "Waiting for cloud-init to finish on ${CLOUD_STORAGE_HOST_IP}."
+                      cloud_init_ready=false
+                      for _ in $(seq 1 60); do
+                          if timeout 300 ssh "${ssh_options[@]}" \
+                              "${CLOUD_STORAGE_BOOTSTRAP_USER}@${CLOUD_STORAGE_HOST_IP}" \
+                              'doas cloud-init status --wait >/dev/null 2>&1 || true' 2>/dev/null; then
+                              cloud_init_ready=true
+                              break
+                          fi
+                          sleep 5
+                      done
+                      if [[ "${cloud_init_ready}" != true ]]; then
+                          echo "::error::Unable to reach ${CLOUD_STORAGE_BOOTSTRAP_USER}@${CLOUD_STORAGE_HOST_IP} or wait for cloud-init."
+                          exit 1
+                      fi
                       echo "Bootstrapping ${CLOUD_STORAGE_DEPLOY_USER} via ${CLOUD_STORAGE_BOOTSTRAP_USER}."
                       deploy_public_key=$(ssh-keygen -y -f <(printf '%s\n' "${CLOUD_STORAGE_DEPLOY_SSH_KEY}"))
                       bootstrap_script=$(
                           printf '%s\n' \
                               'set -e' \
                               "printf 'nameserver ${CLOUD_STORAGE_GATEWAY}\nnameserver 1.1.1.1\n' > /etc/resolv.conf" \
-                              'apk add --no-cache sudo' \
+                              'attempt=0' \
+                              'until apk add --no-cache --no-progress sudo; do' \
+                              '    attempt=$((attempt + 1))' \
+                              '    if [ "${attempt}" -ge 30 ]; then' \
+                              '        echo "apk is still locked after ${attempt} attempts" >&2' \
+                              '        exit 1' \
+                              '    fi' \
+                              '    echo "Waiting for the apk database lock..." >&2' \
+                              '    sleep 5' \
+                              'done' \
                               "addgroup ${CLOUD_STORAGE_DEPLOY_USER} 2>/dev/null || true" \
                               "adduser -D -G ${CLOUD_STORAGE_DEPLOY_USER} -s /bin/ash ${CLOUD_STORAGE_DEPLOY_USER} 2>/dev/null || true" \
                               "addgroup ${CLOUD_STORAGE_DEPLOY_USER} wheel 2>/dev/null || true" \
